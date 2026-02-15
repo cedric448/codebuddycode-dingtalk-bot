@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  dingtalk-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dingtalk-bot:latest
+    container_name: dingtalk-bot
+    restart: unless-stopped
+    
+    # 环境变量
+    environment:
+      # 钉钉配置
+      - DINGTALK_CLIENT_ID=${DINGTALK_CLIENT_ID}
+      - DINGTALK_CLIENT_SECRET=${DINGTALK_CLIENT_SECRET}
+      - DINGTALK_APP_ID=${DINGTALK_APP_ID}
+      
+      # CodeBuddy API 配置
+      - CODEBUDDY_API_URL=${CODEBUDDY_API_URL}
+      - CODEBUDDY_API_TOKEN=${CODEBUDDY_API_TOKEN}
+      
+      # 日志级别
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    
+    # 数据卷
+    volumes:
+      # 图片存储目录
+      - ./images:/app/images
+      # 日志目录
+      - ./logs:/app/logs
+      # 可选：挂载 .env 文件
+      - ./.env:/app/.env:ro
+    
+    # 网络配置
+    networks:
+      - dingtalk-bot-network
+    
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  dingtalk-bot-network:
+    driver: bridge

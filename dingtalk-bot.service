@@ -1,0 +1,21 @@
+[Unit]
+Description=DingTalk Bot Service - CodeBuddy Integration
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/project-wb/dingtalk_bot
+ExecStart=/root/project-wb/dingtalk_bot/venv/bin/python /root/project-wb/dingtalk_bot/bot.py
+Restart=always
+RestartSec=10
+
+# 环境变量
+Environment="PYTHONPATH=/root/project-wb/dingtalk_bot"
+
+# 日志配置
+StandardOutput=append:/var/log/dingtalk-bot.log
+StandardError=append:/var/log/dingtalk-bot.log
+
+[Install]
+WantedBy=multi-user.target
