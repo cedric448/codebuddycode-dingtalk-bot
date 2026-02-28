@@ -20,6 +20,13 @@ services:
       - CODEBUDDY_API_URL=${CODEBUDDY_API_URL}
       - CODEBUDDY_API_TOKEN=${CODEBUDDY_API_TOKEN}
       
+      # CodeBuddy API 请求参数
+      - CODEBUDDY_ADD_DIR=${CODEBUDDY_ADD_DIR:-/root/project-wb}
+      - CODEBUDDY_MODEL=${CODEBUDDY_MODEL:-kimi-k2.5-ioa}
+      - CODEBUDDY_CONTINUE=${CODEBUDDY_CONTINUE:-true}
+      - CODEBUDDY_PRINT=${CODEBUDDY_PRINT:-true}
+      - CODEBUDDY_SKIP_PERMISSIONS=${CODEBUDDY_SKIP_PERMISSIONS:-true}
+      
       # 日志级别
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     

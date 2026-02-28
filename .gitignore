@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 敏感信息
+.env
+*.secret
+*.key
+credentials.json
+
+# 日志文件
+*.log
+logs/
+
+# 图片缓存
+images/
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# 备份文件
+backups/
+*.backup.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 测试临时文件
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 其他
+*.tmp
+*.temp

@@ -72,13 +72,13 @@ echo -e "${BLUE}[步骤 3/5] 创建配置文件...${NC}"
 if [ ! -f ".env" ]; then
     cat > .env << 'EOF'
 # 钉钉机器人配置（从钉钉开放平台获取）
-DINGTALK_CLIENT_ID=dingzidxmtb32udsdbmb
-DINGTALK_CLIENT_SECRET=sa5ZnaPCs00SLRMLl9cODYKbz18jKq0bj46ubiCmm3NMY9mRKTcbCek62Pugq2tC
-DINGTALK_APP_ID=4e6b5eb2-649e-4656-b902-786794bf0a6c
+DINGTALK_CLIENT_ID=your_client_id_here
+DINGTALK_CLIENT_SECRET=your_client_secret_here
+DINGTALK_APP_ID=your_app_id_here
 
 # CodeBuddy HTTP API 配置
-CODEBUDDY_API_URL=http://43.132.153.123/agent
-CODEBUDDY_API_TOKEN=06d56890c91f19135e6d8020e8448a35b31cb9b7cedd7da2842f0616ccadeac4
+CODEBUDDY_API_URL=http://your-server-ip:port/agent
+CODEBUDDY_API_TOKEN=your_codebuddy_api_token_here
 
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL=INFO

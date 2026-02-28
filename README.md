@@ -11,7 +11,15 @@
   - 纯文字处理
   - 纯图片处理（下载图片后发送到 CodeBuddy）
   - 富文本处理（文字+图片）
-- **Markdown 格式**：支持富文本格式回复
+- **异步任务处理**：⭐ 新功能
+  - 智能识别长时间任务（client analysis、公司分析等）
+  - 立即返回初始响应，后台处理
+  - 完成后主动推送结果，不受 webhook 60秒超时限制
+- **Markdown 格式支持**：⭐ 新功能
+  - 自动检测 API 返回的 Markdown 格式
+  - 通过钉钉原生 Markdown 消息类型展示
+  - 支持标题、列表、代码块、表格等格式
+  - 可灵活配置，支持纯文本和 Markdown 混用
 - **Systemd 服务**：支持系统服务管理，开机自启
 - **日志管理**：完整的日志记录
 
@@ -28,28 +36,44 @@
 
 ```
 dingtalk_bot/
-├── bot.py                  # 主程序入口
-├── config.py              # 配置文件
-├── codebuddy_client.py    # CodeBuddy API 客户端
-├── image_manager.py       # 图片管理模块
-├── requirements.txt       # Python 依赖
-├── .env                   # 环境变量配置
-├── .env.example           # 环境变量示例
-├── dingtalk-bot.service   # systemd 服务文件
-├── images/                # 图片存储目录
-├── README.md              # 本文档
+├── bot.py                     # 主程序入口（支持异步任务）
+├── config.py                  # 配置文件
+├── codebuddy_client.py        # CodeBuddy API 客户端
+├── image_manager.py           # 图片管理模块
+├── async_task_manager.py      # 异步任务管理器 ⭐
+├── dingtalk_sender.py         # 钉钉主动推送客户端 ⭐
+├── markdown_utils.py          # Markdown 工具函数 ⭐
+├── requirements.txt           # Python 依赖
+├── .env                       # 环境变量配置
+├── .env.example               # 环境变量示例
+├── dingtalk-bot.service       # systemd 服务文件
+├── images/                    # 图片存储目录
 │
-├── Dockerfile             # Docker 镜像构建文件
-├── docker-compose.yml     # Docker Compose 配置
-├── docker-deploy.sh       # Docker 一键部署脚本
-├── docker-start.sh        # Docker 启动脚本
-├── docker-stop.sh         # Docker 停止脚本
-├── docker-status.sh       # Docker 状态查看脚本
+├── README.md                  # 本文档
+├── CONFIG.md                  # 配置详细说明
+├── ASYNC_FEATURE.md           # 异步功能文档 ⭐
+├── TEST_ASYNC.md              # 异步功能测试指南 ⭐
+├── MARKDOWN_SUPPORT.md        # Markdown 功能文档 ⭐
+├── TEST_MARKDOWN.md           # Markdown 测试指南 ⭐
+├── MARKDOWN_DEPLOYMENT.md     # Markdown 部署指南 ⭐
+├── TROUBLESHOOTING.md         # 故障排查指南
+├── BUGFIX.md                  # Bug 修复记录
+├── DEPLOYMENT_SUMMARY.md      # 部署总结 ⭐
 │
-├── start.sh               # Systemd 一键启动脚本
-├── stop.sh                # Systemd 一键停止脚本
-└── status.sh              # Systemd 状态查看脚本
+├── Dockerfile                 # Docker 镜像构建文件
+├── docker-compose.yml         # Docker Compose 配置
+├── docker-deploy.sh           # Docker 一键部署脚本
+├── docker-start.sh            # Docker 启动脚本
+├── docker-stop.sh             # Docker 停止脚本
+├── docker-status.sh           # Docker 状态查看脚本
+│
+├── start.sh                   # Systemd 一键启动脚本
+├── stop.sh                    # Systemd 一键停止脚本
+├── status.sh                  # Systemd 状态查看脚本
+└── check_async_status.sh      # 异步功能状态检查 ⭐
 ```
+
+**⭐ 标记的是异步和 Markdown 功能相关文件**
 
 ## 快速开始
 
@@ -176,6 +200,97 @@ sudo systemctl status dingtalk-bot
 # 查看实时日志
 sudo tail -f /var/log/dingtalk-bot.log
 ```
+
+## 配置说明
+
+### 环境变量配置
+
+编辑 `.env` 文件配置以下参数：
+
+#### 钉钉配置
+
+```bash
+# 从钉钉开放平台获取
+DINGTALK_CLIENT_ID=your_client_id_here
+DINGTALK_CLIENT_SECRET=your_client_secret_here
+DINGTALK_APP_ID=your_app_id_here
+```
+
+#### CodeBuddy API 配置
+
+```bash
+# API 地址和认证
+CODEBUDDY_API_URL=http://IP:PORT/agent
+CODEBUDDY_API_TOKEN=your_token_here
+```
+
+#### CodeBuddy API 请求参数
+
+```bash
+# 工作目录（支持多个目录用逗号分隔）
+CODEBUDDY_ADD_DIR=/root/project-wb,/root/other-project
+
+# 使用的模型
+CODEBUDDY_MODEL=kimi-k2.5-ioa
+
+# 是否继续对话（true/false）
+CODEBUDDY_CONTINUE=true
+
+# 是否打印输出（true/false）
+CODEBUDDY_PRINT=true
+
+# 是否跳过权限检查（true/false）
+CODEBUDDY_SKIP_PERMISSIONS=true
+```
+
+#### 日志配置
+
+```bash
+# 日志级别：DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL=INFO
+```
+
+#### Markdown 消息配置 ⭐
+
+```bash
+# 是否启用 Markdown 格式消息
+ENABLE_MARKDOWN=true
+
+# 异步任务结果是否使用 Markdown 格式
+USE_MARKDOWN_FOR_ASYNC=true
+
+# 长文本结果是否使用 Markdown 格式
+USE_MARKDOWN_FOR_LONG_TEXT=false
+
+# 是否自动增强 Markdown 格式
+AUTO_ENHANCE_MARKDOWN=true
+```
+
+### CodeBuddy API 请求格式
+
+实际发送到 CodeBuddy 的请求格式：
+
+```bash
+curl -X POST http://IP:PORT/agent \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_token" \
+  -d '{
+    "prompt": "用户的消息内容",
+    "addDir": ["/root/project-wb"],
+    "model": "kimi-k2.5-ioa",
+    "continue": true,
+    "print": true,
+    "dangerouslySkipPermissions": true
+  }'
+```
+
+**参数说明**：
+- `prompt`: 用户输入的消息内容
+- `addDir`: 工作目录数组，CodeBuddy 可访问的目录
+- `model`: 使用的 AI 模型
+- `continue`: 是否继续之前的对话上下文
+- `print`: 是否打印详细输出
+- `dangerouslySkipPermissions`: 是否跳过权限检查
 
 ## 部署方式对比
 
@@ -519,6 +634,18 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 更新日志
 
+### v1.1.0 (2026-02-28)
+
+- ✨ 新增 Markdown 消息格式支持
+  - 自动检测 API 返回的 Markdown 格式
+  - 支持钉钉原生 Markdown 消息类型
+  - 灵活配置选项
+- 📝 新增 Markdown 相关文档
+  - MARKDOWN_SUPPORT.md - 完整功能文档
+  - TEST_MARKDOWN.md - 测试指南
+  - MARKDOWN_DEPLOYMENT.md - 部署指南
+- ✅ 通过完整的单元测试和集成测试
+
 ### v1.0.0 (2026-02-15)
 
 - 初始版本发布
@@ -526,6 +653,7 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 - 支持群聊和单聊
 - 支持文字、图片、富文本消息
 - 集成 Systemd 服务
+- 支持异步任务处理和主动推送
 
 ## 安全建议
 
@@ -551,6 +679,6 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 文档版本
 
-- 版本: 1.0.0
-- 最后更新: 2026-02-15
+- 版本: 1.1.0
+- 最后更新: 2026-02-28
 - 维护者: CodeBuddy Team

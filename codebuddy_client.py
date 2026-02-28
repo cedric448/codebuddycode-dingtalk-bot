@@ -8,7 +8,15 @@ from typing import Optional, Dict, Any
 
 import requests
 
-from config import CODEBUDDY_API_URL, CODEBUDDY_API_TOKEN
+from config import (
+    CODEBUDDY_API_URL, 
+    CODEBUDDY_API_TOKEN,
+    CODEBUDDY_ADD_DIR,
+    CODEBUDDY_MODEL,
+    CODEBUDDY_CONTINUE,
+    CODEBUDDY_PRINT,
+    CODEBUDDY_SKIP_PERMISSIONS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +52,21 @@ class CodebuddyClient:
                 # 纯图片：默认提示 + 图片路径
                 prompt = f"分析这张图片：{image_path}"
 
+        # 构建基础 payload
         payload = {
             "prompt": prompt,
-            "print": True,
-            "dangerouslySkipPermissions": True
+            "print": CODEBUDDY_PRINT,
+            "dangerouslySkipPermissions": CODEBUDDY_SKIP_PERMISSIONS,
+            "model": CODEBUDDY_MODEL,
+            "continue": CODEBUDDY_CONTINUE
         }
+
+        # 添加工作目录（支持多个目录）
+        if CODEBUDDY_ADD_DIR:
+            # 支持逗号分隔的多个目录
+            dirs = [d.strip() for d in CODEBUDDY_ADD_DIR.split(',') if d.strip()]
+            if dirs:
+                payload["addDir"] = dirs
 
         return payload
 
@@ -77,7 +95,7 @@ class CodebuddyClient:
                 self.api_url,
                 headers=self.headers,
                 json=payload,
-                timeout=120
+                timeout=300
             )
 
             # 强制使用UTF-8编码解析响应
