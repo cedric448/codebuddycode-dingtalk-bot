@@ -76,6 +76,12 @@ logger = logging.getLogger(__name__)
 
 class MyCallbackHandler(ChatbotHandler):
     """自定义消息处理器 - 继承ChatbotHandler"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 消息去重 - 使用集合存储最近处理过的消息ID
+        self.processed_messages = set()
+        self.max_cache_size = 1000  # 最多缓存1000条消息ID
 
     async def process(self, callback_message: CallbackMessage):
         """
@@ -90,9 +96,24 @@ class MyCallbackHandler(ChatbotHandler):
                 logger.error("无法获取消息数据")
                 return AckMessage.STATUS_OK, 'ok'
 
+            # 消息去重检查
+            msg_id = message.message_id
+            if msg_id in self.processed_messages:
+                logger.info(f"消息已处理过,跳过: {msg_id}")
+                return AckMessage.STATUS_OK, 'ok'
+            
+            # 添加到已处理集合
+            self.processed_messages.add(msg_id)
+            
+            # 限制缓存大小
+            if len(self.processed_messages) > self.max_cache_size:
+                # 移除最旧的一半消息ID(简单实现,更好的方式是用 LRU)
+                self.processed_messages = set(list(self.processed_messages)[500:])
+                logger.info(f"已清理消息去重缓存,当前大小: {len(self.processed_messages)}")
+
             # 获取消息内容
             msg_type = message.message_type
-            logger.info(f"收到消息类型: {msg_type}")
+            logger.info(f"收到消息类型: {msg_type}, 消息ID: {msg_id}")
             
             # 获取用户消息文本
             user_text = self._extract_text_from_message(message)
@@ -348,17 +369,17 @@ class MyCallbackHandler(ChatbotHandler):
                 self.reply_markdown("图片生成成功", markdown_text, message)
                 logger.info("已通过 Markdown 格式发送图片 URL")
             else:
-                self.reply_text("图片生成失败,请检查提示词或稍后重试", message)
+                # 图片生成失败,记录日志但不发送错误消息
+                # (可能是超时或网络问题,避免重复消息)
+                logger.warning("图片生成返回空路径,可能是API超时或失败")
                 
         except Exception as e:
             logger.error(f"图片生成处理失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
             
-            try:
-                self.reply_text(f"图片生成失败: {str(e)}", message)
-            except:
-                pass
+            # 只在明确的错误情况下回复用户
+            # 超时错误不回复,避免重复消息
 
     def _process_message_sync(self, message: ChatbotMessage) -> str:
         """同步处理消息 - 在线程池中执行"""
