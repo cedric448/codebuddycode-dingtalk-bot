@@ -38,6 +38,7 @@ from image_manager import image_manager
 from async_task_manager import task_manager, TaskStatus
 from dingtalk_sender import dingtalk_sender
 from markdown_utils import markdown_formatter
+from image_generator import image_generator
 import threading
 
 
@@ -94,6 +95,33 @@ class MyCallbackHandler(ChatbotHandler):
             
             # 获取用户消息文本
             user_text = self._extract_text_from_message(message)
+            
+            # 检查是否有图片
+            has_image = message.message_type in ["picture", "richText"]
+            image_download_code = None
+            if has_image:
+                if message.message_type == "picture" and message.image_content:
+                    image_download_code = message.image_content.download_code
+                elif message.message_type == "richText" and hasattr(message, 'rich_text_content'):
+                    rich_text_list = message.rich_text_content.rich_text_list if hasattr(message.rich_text_content, 'rich_text_list') else []
+                    for item in rich_text_list:
+                        if isinstance(item, dict) and 'downloadCode' in item:
+                            image_download_code = item['downloadCode']
+                            break
+            
+            # 检测是否是生图请求
+            is_generation, gen_type = image_generator.detect_image_generation_request(user_text, has_image)
+            
+            if is_generation:
+                logger.info(f"检测到生图请求,类型: {gen_type}")
+                # 发送初始回复
+                self.reply_text("收到生图请求,正在处理中...", message)
+                
+                # 处理生图请求
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._process_image_generation, message, user_text, gen_type, image_download_code)
+                
+                return AckMessage.STATUS_OK, 'ok'
             
             # 判断是否需要异步处理
             should_async = task_manager.should_use_async(user_text)
@@ -252,6 +280,68 @@ class MyCallbackHandler(ChatbotHandler):
                     msg_type='text',
                     content=f"处理失败: {str(e)}"
                 )
+            except:
+                pass
+
+    def _process_image_generation(self, message: ChatbotMessage, user_text: str, gen_type: str, image_download_code: str = None):
+        """
+        处理图片生成请求
+        
+        Args:
+            message: 消息对象
+            user_text: 用户消息文本
+            gen_type: 生成类型 ('text-to-image' 或 'image-to-image')
+            image_download_code: 图片下载码(图生图时需要)
+        """
+        try:
+            # 提取提示词
+            prompt = image_generator.extract_prompt(user_text, gen_type)
+            logger.info(f"提取的提示词: {prompt}")
+            
+            generated_image_path = None
+            
+            if gen_type == 'text-to-image':
+                # 文生图
+                generated_image_path = image_generator.generate_text_to_image(prompt)
+            elif gen_type == 'image-to-image':
+                # 图生图 - 需要先下载源图片
+                if not image_download_code:
+                    self.reply_text("图生图需要提供源图片", message)
+                    return
+                
+                source_image_path = self._download_image(image_download_code)
+                if not source_image_path:
+                    self.reply_text("源图片下载失败", message)
+                    return
+                
+                generated_image_path = image_generator.generate_image_to_image(prompt, source_image_path)
+            
+            # 发送生成的图片
+            if generated_image_path:
+                logger.info(f"图片生成成功,准备发送: {generated_image_path}")
+                
+                # 方式1: 尝试通过钉钉发送器发送图片
+                success = dingtalk_sender.send_image_message(
+                    conversation_id=message.conversation_id,
+                    user_id=message.sender_staff_id,
+                    image_path=generated_image_path
+                )
+                
+                if success:
+                    logger.info("图片已成功发送到钉钉")
+                else:
+                    # 方式2: 如果失败,发送图片路径
+                    self.reply_text(f"图片已生成,保存路径: {generated_image_path}", message)
+            else:
+                self.reply_text("图片生成失败,请检查提示词或稍后重试", message)
+                
+        except Exception as e:
+            logger.error(f"图片生成处理失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            try:
+                self.reply_text(f"图片生成失败: {str(e)}", message)
             except:
                 pass
 

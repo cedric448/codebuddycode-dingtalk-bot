@@ -1,10 +1,12 @@
 """
 钉钉主动推送消息客户端
-使用钉钉 OpenAPI 主动发送消息，不依赖 session webhook
+使用钉钉 OpenAPI 主动发送消息,不依赖 session webhook
 """
 import json
 import logging
 import requests
+import os
+import base64
 from typing import Optional
 
 from config import DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET
@@ -19,6 +21,7 @@ class DingTalkSender:
     MESSAGE_TYPES = {
         'text': 'sampleText',
         'markdown': 'sampleMarkdown',
+        'image': 'sampleImageMsg',
     }
     
     def __init__(self):
@@ -182,6 +185,140 @@ class DingTalkSender:
             
         except Exception as e:
             logger.error(f"发送 Markdown 消息失败: {e}")
+            return False
+    
+    def upload_media(self, file_path: str, media_type: str = "image") -> Optional[str]:
+        """
+        上传媒体文件到钉钉
+        
+        Args:
+            file_path: 本地文件路径
+            media_type: 媒体类型 (image/voice/video/file)
+            
+        Returns:
+            media_id,失败返回 None
+        """
+        try:
+            access_token = self._get_access_token()
+            
+            url = "https://oapi.dingtalk.com/media/upload"
+            
+            # 检查文件是否存在
+            if not os.path.exists(file_path):
+                logger.error(f"文件不存在: {file_path}")
+                return None
+            
+            # 读取文件
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            
+            filename = os.path.basename(file_path)
+            
+            # 构建请求
+            params = {
+                'access_token': access_token,
+                'type': media_type
+            }
+            
+            files = {
+                'media': (filename, file_content, 'image/png')
+            }
+            
+            logger.info(f"上传媒体文件: {filename}, 类型: {media_type}")
+            
+            response = requests.post(
+                url,
+                params=params,
+                files=files,
+                timeout=30
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('errcode') == 0:
+                media_id = result.get('media_id')
+                logger.info(f"媒体文件上传成功, media_id: {media_id}")
+                return media_id
+            else:
+                logger.error(f"媒体文件上传失败: {result}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"上传媒体文件失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    def send_image_message(
+        self,
+        conversation_id: str,
+        user_id: str,
+        image_path: str
+    ) -> bool:
+        """
+        发送图片消息
+        
+        Args:
+            conversation_id: 会话ID
+            user_id: 用户ID
+            image_path: 本地图片路径
+            
+        Returns:
+            是否发送成功
+        """
+        try:
+            # 方案1: 尝试使用图片 URL(如果可以访问)
+            # 方案2: 使用 base64 编码
+            
+            # 读取图片并转为 base64
+            if not os.path.exists(image_path):
+                logger.error(f"图片文件不存在: {image_path}")
+                return False
+            
+            with open(image_path, 'rb') as f:
+                image_data = f.read()
+            
+            # 转为 base64
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            
+            access_token = self._get_access_token()
+            
+            url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "x-acs-dingtalk-access-token": access_token
+            }
+            
+            payload = {
+                "robotCode": self.client_id,
+                "userIds": [user_id],
+                "msgKey": "sampleImageMsg",
+                "msgParam": json.dumps({
+                    "photoURL": f"data:image/png;base64,{image_base64}"
+                }, ensure_ascii=False)
+            }
+            
+            logger.info(f"发送图片消息到用户 {user_id}, 图片: {image_path}")
+            
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            logger.info(f"图片消息发送响应: {result}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"发送图片消息失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def send_message(

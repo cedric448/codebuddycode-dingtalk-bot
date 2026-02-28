@@ -23,6 +23,7 @@ logs/
 
 # 图片缓存
 images/
+imagegen/
 *.jpg
 *.jpeg
 *.png
