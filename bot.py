@@ -361,22 +361,18 @@ class MyCallbackHandler(ChatbotHandler):
                 
                 logger.info(f"图片 URL: {image_url}")
                 
-                # 使用 Markdown 格式发送图片
-                markdown_text = f"""# 🎨 图片生成完成!
-
-**提示词**: {prompt}
-
-![生成的图片]({image_url})
-
-**图片信息**:
-- 文件大小: {file_size:.1f} KB
-- 生成类型: {gen_type}
-- 访问链接: [{filename}]({image_url})
-
-> 提示: 点击图片可查看大图"""
+                # 使用链接卡片格式发送图片 (支持图片预览)
+                card_title = "🎨 图片生成完成!"
+                card_text = f"提示词: {prompt}\n\n文件大小: {file_size:.1f} KB\n生成类型: {gen_type}\n\n点击查看完整图片"
                 
-                self.reply_markdown("图片生成成功", markdown_text, message)
-                logger.info("已通过 Markdown 格式发送图片 URL")
+                self.reply_link_card(
+                    title=card_title,
+                    text=card_text,
+                    image_url=image_url,
+                    link_url=image_url,
+                    incoming_message=message
+                )
+                logger.info("已通过链接卡片发送图片 URL")
             else:
                 # 图片生成失败,记录日志但不发送错误消息
                 # (可能是超时或网络问题,避免重复消息)
@@ -614,6 +610,55 @@ class MyCallbackHandler(ChatbotHandler):
             logger.error(f"Markdown 消息发送失败: {e}, response={response.text if response else 'None'}")
             return None
         return response.json() if response.text else None
+    
+    def reply_link_card(self, title: str, text: str, image_url: str, link_url: str, incoming_message: ChatbotMessage):
+        """
+        发送链接卡片消息 - 支持图片预览
+        
+        Args:
+            title: 卡片标题
+            text: 卡片文本描述
+            image_url: 图片URL
+            link_url: 点击卡片跳转的链接
+            incoming_message: 原始消息对象
+        """
+        import json
+        import requests
+        
+        # 确保文本是UTF-8编码
+        if isinstance(text, bytes):
+            text = text.decode('utf-8')
+        if isinstance(title, bytes):
+            title = title.decode('utf-8')
+        
+        logger.info(f"准备发送链接卡片: 标题={title}, 图片={image_url}")
+        
+        request_headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Accept': '*/*',
+        }
+        values = {
+            'msgtype': 'link',
+            'link': {
+                'title': title,
+                'text': text,
+                'messageUrl': link_url,
+                'picUrl': image_url
+            }
+        }
+        try:
+            response = requests.post(
+                incoming_message.session_webhook,
+                headers=request_headers,
+                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
+            )
+            response.raise_for_status()
+            
+            logger.info(f"链接卡片发送成功，钉钉响应: {response.text}")
+        except Exception as e:
+            logger.error(f"链接卡片发送失败: {e}, response={response.text if response else 'None'}")
+            return None
+        return response.json() if response.text else None
 
     def _send_long_text(self, content: str, message: ChatbotMessage):
         """发送长文本消息 - 支持 Markdown 格式"""
@@ -759,21 +804,23 @@ class MyCallbackHandler(ChatbotHandler):
             description = re.sub(r'/root/generated-images/\S+\.(?:png|jpg|jpeg|gif|webp)', '', description)
             description = description.strip()
             
-            # 使用 Markdown 格式发送图片
-            markdown_text = f"""# 🎨 图片已生成!
-
-{description}
-
-![生成的图片]({image_url})
-
-**图片信息**:
-- 文件大小: {file_size:.1f} KB
-- 访问链接: [{new_filename}]({image_url})
-
-> 提示: 点击图片可查看大图"""
+            # 截取描述文本(链接卡片有长度限制)
+            max_desc_length = 200
+            if len(description) > max_desc_length:
+                description = description[:max_desc_length] + "..."
             
-            self.reply_markdown("图片生成完成", markdown_text, message)
-            logger.info(f"已通过 Markdown 格式发送生成的图片: {image_url}")
+            # 使用链接卡片格式发送图片 (支持图片预览)
+            card_title = "🎨 图片已生成!"
+            card_text = f"{description}\n\n文件大小: {file_size:.1f} KB\n点击查看完整图片"
+            
+            self.reply_link_card(
+                title=card_title,
+                text=card_text,
+                image_url=image_url,
+                link_url=image_url,
+                incoming_message=message
+            )
+            logger.info(f"已通过链接卡片发送生成的图片: {image_url}")
             
         except Exception as e:
             logger.error(f"发送生成的图片失败: {e}")
