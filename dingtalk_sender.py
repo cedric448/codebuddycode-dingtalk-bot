@@ -250,6 +250,69 @@ class DingTalkSender:
             logger.error(traceback.format_exc())
             return None
     
+    def _compress_image(self, image_path: str, max_size_kb: int = 500) -> str:
+        """
+        压缩图片到指定大小
+        
+        Args:
+            image_path: 原图片路径
+            max_size_kb: 最大文件大小(KB)
+            
+        Returns:
+            压缩后的图片路径
+        """
+        try:
+            from PIL import Image
+            import io
+            
+            # 打开图片
+            img = Image.open(image_path)
+            
+            # 如果是 RGBA 模式,转换为 RGB
+            if img.mode == 'RGBA':
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                img = background
+            
+            # 压缩图片
+            quality = 85
+            compressed_path = image_path.replace('.png', '_compressed.jpg')
+            
+            while quality > 20:
+                # 保存到内存
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=quality, optimize=True)
+                size_kb = len(buffer.getvalue()) / 1024
+                
+                if size_kb <= max_size_kb:
+                    # 保存到文件
+                    with open(compressed_path, 'wb') as f:
+                        f.write(buffer.getvalue())
+                    logger.info(f"图片压缩成功: {size_kb:.1f}KB (质量: {quality})")
+                    return compressed_path
+                
+                quality -= 10
+            
+            # 如果还是太大,缩小尺寸
+            logger.warning(f"图片过大,尝试缩小尺寸")
+            width, height = img.size
+            img = img.resize((width // 2, height // 2), Image.Resampling.LANCZOS)
+            
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=75, optimize=True)
+            
+            with open(compressed_path, 'wb') as f:
+                f.write(buffer.getvalue())
+            
+            size_kb = len(buffer.getvalue()) / 1024
+            logger.info(f"图片缩小并压缩成功: {size_kb:.1f}KB")
+            
+            return compressed_path
+            
+        except Exception as e:
+            logger.error(f"图片压缩失败: {e}")
+            return image_path
+    
     def send_image_message(
         self,
         conversation_id: str,
@@ -268,19 +331,29 @@ class DingTalkSender:
             是否发送成功
         """
         try:
-            # 方案1: 尝试使用图片 URL(如果可以访问)
-            # 方案2: 使用 base64 编码
-            
-            # 读取图片并转为 base64
             if not os.path.exists(image_path):
                 logger.error(f"图片文件不存在: {image_path}")
                 return False
             
+            # 检查文件大小
+            file_size_kb = os.path.getsize(image_path) / 1024
+            logger.info(f"原始图片大小: {file_size_kb:.1f}KB")
+            
+            # 如果图片太大,先压缩
+            if file_size_kb > 500:
+                logger.info(f"图片过大,开始压缩...")
+                image_path = self._compress_image(image_path, max_size_kb=500)
+                file_size_kb = os.path.getsize(image_path) / 1024
+                logger.info(f"压缩后图片大小: {file_size_kb:.1f}KB")
+            
+            # 读取图片并转为 base64
             with open(image_path, 'rb') as f:
                 image_data = f.read()
             
             # 转为 base64
             image_base64 = base64.b64encode(image_data).decode('utf-8')
+            base64_size_kb = len(image_base64) / 1024
+            logger.info(f"Base64 编码后大小: {base64_size_kb:.1f}KB")
             
             access_token = self._get_access_token()
             
@@ -296,7 +369,7 @@ class DingTalkSender:
                 "userIds": [user_id],
                 "msgKey": "sampleImageMsg",
                 "msgParam": json.dumps({
-                    "photoURL": f"data:image/png;base64,{image_base64}"
+                    "photoURL": f"data:image/jpeg;base64,{image_base64}"
                 }, ensure_ascii=False)
             }
             
