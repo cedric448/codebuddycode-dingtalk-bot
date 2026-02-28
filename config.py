@@ -39,3 +39,7 @@ ENABLE_MARKDOWN = os.getenv("ENABLE_MARKDOWN", "true").lower() == "true"  # 是�
 USE_MARKDOWN_FOR_ASYNC = os.getenv("USE_MARKDOWN_FOR_ASYNC", "true").lower() == "true"  # 异步任务是否使用 Markdown
 USE_MARKDOWN_FOR_LONG_TEXT = os.getenv("USE_MARKDOWN_FOR_LONG_TEXT", "false").lower() == "true"  # 长文本是否使用 Markdown
 AUTO_ENHANCE_MARKDOWN = os.getenv("AUTO_ENHANCE_MARKDOWN", "true").lower() == "true"  # 是否自动增强 Markdown
+
+# 图片服务器配置
+IMAGE_SERVER_URL = os.getenv("IMAGE_SERVER_URL", "http://localhost:8090")  # 图片服务器 URL
+IMAGE_SERVER_PORT = int(os.getenv("IMAGE_SERVER_PORT", "8090"))  # 图片服务器端口
