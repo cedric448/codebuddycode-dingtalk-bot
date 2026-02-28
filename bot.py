@@ -506,15 +506,44 @@ class MyCallbackHandler(ChatbotHandler):
                     logger.info(f"获取到下载链接: {download_url}")
 
                     if download_url:
-                        # 使用下载链接获取图片
-                        img_resp = requests.get(download_url, timeout=30)
-                        if img_resp.status_code == 200:
-                            filename = f"{uuid.uuid4().hex}.jpg"
-                            local_path = image_manager.get_image_path(filename)
-                            with open(local_path, 'wb') as f:
-                                f.write(img_resp.content)
-                            logger.info(f"图片下载成功: {local_path}")
-                            return local_path
+                        # 使用下载链接获取图片 - 增加超时时间和重试
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                logger.info(f"开始下载图片 (尝试 {attempt + 1}/{max_retries}): {download_url[:100]}...")
+                                img_resp = requests.get(download_url, timeout=120, stream=True)
+                                if img_resp.status_code == 200:
+                                    filename = f"{uuid.uuid4().hex}.jpg"
+                                    local_path = image_manager.get_image_path(filename)
+                                    
+                                    # 分块写入,避免内存占用过大
+                                    with open(local_path, 'wb') as f:
+                                        for chunk in img_resp.iter_content(chunk_size=8192):
+                                            if chunk:
+                                                f.write(chunk)
+                                    
+                                    logger.info(f"图片下载成功: {local_path}")
+                                    return local_path
+                                else:
+                                    logger.warning(f"图片下载失败: HTTP {img_resp.status_code}")
+                                    if attempt < max_retries - 1:
+                                        import time
+                                        time.sleep(2)  # 重试前等待2秒
+                                        continue
+                            except requests.exceptions.Timeout:
+                                logger.warning(f"图片下载超时 (尝试 {attempt + 1}/{max_retries})")
+                                if attempt < max_retries - 1:
+                                    import time
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    logger.error("图片下载失败: 多次超时")
+                            except Exception as e:
+                                logger.error(f"图片下载异常 (尝试 {attempt + 1}/{max_retries}): {e}")
+                                if attempt < max_retries - 1:
+                                    import time
+                                    time.sleep(2)
+                                    continue
                 except Exception as e:
                     logger.error(f"解析下载响应失败: {e}")
 
