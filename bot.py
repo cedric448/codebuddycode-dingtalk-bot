@@ -320,18 +320,87 @@ class MyCallbackHandler(ChatbotHandler):
             if generated_image_path:
                 logger.info(f"图片生成成功,准备发送: {generated_image_path}")
                 
-                # 方式1: 尝试通过钉钉发送器发送图片
-                success = dingtalk_sender.send_image_message(
-                    conversation_id=message.conversation_id,
-                    user_id=message.sender_staff_id,
-                    image_path=generated_image_path
-                )
-                
-                if success:
-                    logger.info("图片已成功发送到钉钉")
-                else:
-                    # 方式2: 如果失败,发送图片路径
-                    self.reply_text(f"图片已生成,保存路径: {generated_image_path}", message)
+                # 方案1: 尝试通过钉钉 API 发送图片(使用 session webhook)
+                try:
+                    import os
+                    import base64
+                    
+                    file_size = os.path.getsize(generated_image_path) / 1024
+                    logger.info(f"准备发送图片,文件大小: {file_size:.1f}KB")
+                    
+                    # 如果图片太大,先压缩
+                    send_path = generated_image_path
+                    if file_size > 500:
+                        from dingtalk_sender import dingtalk_sender
+                        send_path = dingtalk_sender._compress_image(generated_image_path, max_size_kb=200)
+                        file_size = os.path.getsize(send_path) / 1024
+                        logger.info(f"压缩后大小: {file_size:.1f}KB")
+                    
+                    # 读取图片并转换为 base64
+                    with open(send_path, 'rb') as f:
+                        image_data = f.read()
+                    image_base64 = base64.b64encode(image_data).decode('utf-8')
+                    
+                    # 通过 webhook 发送(使用 markdown 消息类型,可以嵌入图片)
+                    import requests
+                    import json
+                    
+                    webhook_url = message.session_webhook
+                    
+                    # 尝试发送图文消息
+                    payload = {
+                        "msgtype": "feedCard",
+                        "feedCard": {
+                            "links": [{
+                                "title": f"图片生成完成: {prompt[:30]}",
+                                "messageURL": "dingtalk://dingtalkclient/page/link?url=https://www.dingtalk.com",
+                                "picURL": f"data:image/jpeg;base64,{image_base64}"
+                            }]
+                        }
+                    }
+                    
+                    headers = {
+                        'Content-Type': 'application/json; charset=utf-8'
+                    }
+                    
+                    logger.info(f"尝试发送 feedCard 消息, base64 大小: {len(image_base64)}")
+                    response = requests.post(
+                        webhook_url,
+                        headers=headers,
+                        data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                        timeout=10
+                    )
+                    
+                    logger.info(f"feedCard 响应: {response.text}")
+                    
+                    if response.status_code == 200 and response.json().get('errcode') == 0:
+                        logger.info("图片通过 feedCard 发送成功")
+                        return
+                    else:
+                        raise Exception(f"feedCard 发送失败: {response.text}")
+                        
+                except Exception as e:
+                    logger.error(f"feedCard 发送失败: {e}")
+                    
+                    # 方案2: 降级为 Markdown 格式
+                    try:
+                        markdown_text = f"""# 🎨 图片生成完成!
+
+**提示词**: {prompt}
+
+**图片信息**:
+- 保存路径: `{generated_image_path}`
+- 文件大小: {file_size:.1f} KB
+- 生成类型: {gen_type}
+
+> 图片已生成并保存。由于钉钉 API 限制,暂时无法直接展示图片。"""
+                        
+                        self.reply_markdown("图片生成成功", markdown_text, message)
+                        logger.info("已通过 Markdown 格式通知用户")
+                    except Exception as e2:
+                        logger.error(f"Markdown 发送也失败: {e2}")
+                        # 最后降级: 纯文本
+                        self.reply_text(f"图片已生成,保存路径: {generated_image_path}", message)
             else:
                 self.reply_text("图片生成失败,请检查提示词或稍后重试", message)
                 

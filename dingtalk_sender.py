@@ -382,14 +382,25 @@ class DingTalkSender:
                 timeout=30
             )
             
+            # 记录响应详情
+            logger.info(f"钉钉 API 响应状态码: {response.status_code}")
+            logger.info(f"钉钉 API 响应内容: {response.text[:500]}")
+            
             response.raise_for_status()
             result = response.json()
             
             logger.info(f"图片消息发送响应: {result}")
             return True
             
-        except Exception as e:
+        except requests.exceptions.HTTPError as e:
             logger.error(f"发送图片消息失败: {e}")
+            logger.error(f"响应状态码: {response.status_code if response else 'N/A'}")
+            logger.error(f"响应内容: {response.text if response else 'N/A'}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+        except Exception as e:
+            logger.error(f"发送图片消息异常: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return False
