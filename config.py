@@ -20,7 +20,7 @@ CODEBUDDY_API_URL = os.getenv("CODEBUDDY_API_URL", "http://your-server-ip:port/a
 CODEBUDDY_API_TOKEN = os.getenv("CODEBUDDY_API_TOKEN", "")
 
 # CodeBuddy API 请求参数配置
-CODEBUDDY_ADD_DIR = os.getenv("CODEBUDDY_ADD_DIR", "/root/project-wb")  # 可配置的工作目录
+CODEBUDDY_ADD_DIR = os.getenv("CODEBUDDY_ADD_DIR", "/root/project-wb/bot-workspace")  # 可配置的工作目录
 CODEBUDDY_MODEL = os.getenv("CODEBUDDY_MODEL", "kimi-k2.5-ioa")  # 可配置的模型
 CODEBUDDY_CONTINUE = os.getenv("CODEBUDDY_CONTINUE", "true").lower() == "true"  # 是否继续对话
 CODEBUDDY_PRINT = os.getenv("CODEBUDDY_PRINT", "true").lower() == "true"  # 是否打印输出
