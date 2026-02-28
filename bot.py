@@ -163,19 +163,28 @@ class MyCallbackHandler(ChatbotHandler):
                 
                 # 3. 发送最终结果
                 if result:
-                    # 检查是否应该使用 Markdown 格式
-                    use_markdown = ENABLE_MARKDOWN and markdown_formatter.is_markdown_format(result)
+                    # 检查响应中是否包含生成的图片路径
+                    generated_image = self._extract_generated_image(result)
                     
-                    if use_markdown:
-                        # 转换为 Markdown 格式
-                        title, md_content = markdown_formatter.convert_to_markdown(
-                            result,
-                            auto_enhance=AUTO_ENHANCE_MARKDOWN
-                        )
-                        self.reply_markdown(title, md_content, message)
+                    if generated_image:
+                        # 响应中包含生成的图片,发送图片
+                        logger.info(f"检测到响应中包含生成的图片: {generated_image}")
+                        self._send_generated_image(message, generated_image, result)
                     else:
-                        # 使用 _send_long_text 处理长文本
-                        self._send_long_text(result, message)
+                        # 普通文本响应
+                        # 检查是否应该使用 Markdown 格式
+                        use_markdown = ENABLE_MARKDOWN and markdown_formatter.is_markdown_format(result)
+                        
+                        if use_markdown:
+                            # 转换为 Markdown 格式
+                            title, md_content = markdown_formatter.convert_to_markdown(
+                                result,
+                                auto_enhance=AUTO_ENHANCE_MARKDOWN
+                            )
+                            self.reply_markdown(title, md_content, message)
+                        else:
+                            # 使用 _send_long_text 处理长文本
+                            self._send_long_text(result, message)
 
             return AckMessage.STATUS_OK, 'ok'
 
@@ -677,6 +686,101 @@ class MyCallbackHandler(ChatbotHandler):
             sections.append(current_section)
         
         return sections if sections else [content]
+    
+    def _extract_generated_image(self, response_text: str) -> str:
+        """
+        从CodeBuddy响应中提取生成的图片路径
+        
+        Args:
+            response_text: CodeBuddy的响应文本
+            
+        Returns:
+            图片路径,如果没找到返回None
+        """
+        import re
+        
+        # 匹配 `/root/generated-images/xxx.png` 或类似路径
+        patterns = [
+            r'`(/root/generated-images/[^`]+\.(?:png|jpg|jpeg|gif|webp))`',  # 反引号包裹
+            r'(/root/generated-images/\S+\.(?:png|jpg|jpeg|gif|webp))',      # 无包裹
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response_text)
+            if match:
+                image_path = match.group(1)
+                logger.info(f"从响应中提取到图片路径: {image_path}")
+                return image_path
+        
+        return None
+    
+    def _send_generated_image(self, message: ChatbotMessage, image_path: str, original_response: str):
+        """
+        发送CodeBuddy生成的图片
+        
+        Args:
+            message: 消息对象
+            image_path: 生成的图片路径
+            original_response: 原始响应文本
+        """
+        import os
+        import shutil
+        import uuid
+        from pathlib import Path
+        
+        try:
+            # 检查图片是否存在
+            if not os.path.exists(image_path):
+                logger.warning(f"图片文件不存在: {image_path}")
+                # 发送原始响应
+                self.reply_text(original_response, message)
+                return
+            
+            # 复制图片到 imagegen 目录
+            imagegen_dir = Path(__file__).parent / "imagegen"
+            imagegen_dir.mkdir(exist_ok=True)
+            
+            # 生成新文件名
+            file_ext = os.path.splitext(image_path)[1]
+            new_filename = f"codebuddy-generated_{uuid.uuid4().hex[:16]}{file_ext}"
+            target_path = imagegen_dir / new_filename
+            
+            shutil.copy2(image_path, target_path)
+            logger.info(f"图片已复制到: {target_path}")
+            
+            # 构建图片 URL
+            image_url = f"{IMAGE_SERVER_URL}/{new_filename}"
+            file_size = os.path.getsize(target_path) / 1024
+            
+            # 从原始响应中提取描述文本(去掉路径部分)
+            description = original_response
+            import re
+            description = re.sub(r'`/root/generated-images/[^`]+`', '', description)
+            description = re.sub(r'/root/generated-images/\S+\.(?:png|jpg|jpeg|gif|webp)', '', description)
+            description = description.strip()
+            
+            # 使用 Markdown 格式发送图片
+            markdown_text = f"""# 🎨 图片已生成!
+
+{description}
+
+![生成的图片]({image_url})
+
+**图片信息**:
+- 文件大小: {file_size:.1f} KB
+- 访问链接: [{new_filename}]({image_url})
+
+> 提示: 点击图片可查看大图"""
+            
+            self.reply_markdown("图片生成完成", markdown_text, message)
+            logger.info(f"已通过 Markdown 格式发送生成的图片: {image_url}")
+            
+        except Exception as e:
+            logger.error(f"发送生成的图片失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 出错时发送原始响应
+            self.reply_text(original_response, message)
 
 
 async def main():
