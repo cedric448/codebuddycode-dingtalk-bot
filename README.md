@@ -20,6 +20,11 @@
   - 通过钉钉原生 Markdown 消息类型展示
   - 支持标题、列表、代码块、表格等格式
   - 可灵活配置，支持纯文本和 Markdown 混用
+- **图片生成功能**：⭐ 新功能
+  - 文生图：通过文本描述生成图片
+  - 图生图：上传图片进行编辑和变换
+  - 自动部署HTTP静态服务器，通过nginx反向代理
+  - 钉钉原生图片消息展示
 - **Systemd 服务**：支持系统服务管理，开机自启
 - **日志管理**：完整的日志记录
 
@@ -30,6 +35,17 @@
                                               |
                                               v
                                          本地图片存储
+                                              |
+                                              v
+                                    HTTP图片服务器 (端口8090)
+                                              |
+                                              v
+                                       Nginx反向代理 (端口80)
+                                              |
+                                              v
+                                         公网访问路径:
+                                    /dingtalk-images/ -> 图片服务
+                                    /agent -> CodeBuddy API
 ```
 
 ## 项目结构
@@ -40,6 +56,8 @@ dingtalk_bot/
 ├── config.py                  # 配置文件
 ├── codebuddy_client.py        # CodeBuddy API 客户端
 ├── image_manager.py           # 图片管理模块
+├── image_generator.py         # 图片生成模块 ⭐
+├── image_server.py            # HTTP图片服务器 ⭐
 ├── async_task_manager.py      # 异步任务管理器 ⭐
 ├── dingtalk_sender.py         # 钉钉主动推送客户端 ⭐
 ├── markdown_utils.py          # Markdown 工具函数 ⭐
@@ -48,17 +66,36 @@ dingtalk_bot/
 ├── .env.example               # 环境变量示例
 ├── dingtalk-bot.service       # systemd 服务文件
 ├── images/                    # 图片存储目录
+├── imagegen/                  # 生成图片存储目录 ⭐
 │
 ├── README.md                  # 本文档
-├── CONFIG.md                  # 配置详细说明
-├── ASYNC_FEATURE.md           # 异步功能文档 ⭐
-├── TEST_ASYNC.md              # 异步功能测试指南 ⭐
-├── MARKDOWN_SUPPORT.md        # Markdown 功能文档 ⭐
-├── TEST_MARKDOWN.md           # Markdown 测试指南 ⭐
-├── MARKDOWN_DEPLOYMENT.md     # Markdown 部署指南 ⭐
-├── TROUBLESHOOTING.md         # 故障排查指南
-├── BUGFIX.md                  # Bug 修复记录
-├── DEPLOYMENT_SUMMARY.md      # 部署总结 ⭐
+├── docs/                      # 文档目录 ⭐
+│   ├── deployment/           # 部署相关文档
+│   │   ├── IMAGE_SERVER_DEPLOYMENT.md
+│   │   └── IMAGE_SERVER_FIX.md
+│   ├── troubleshooting/      # 故障排查文档
+│   │   ├── BUGFIX.md
+│   │   ├── BUGFIX_MESSAGE_DEDUPLICATION.md
+│   │   ├── IMAGE_SEND_ISSUE.md
+│   │   └── TROUBLESHOOTING.md
+│   ├── features/             # 功能文档
+│   │   ├── ASYNC_FEATURE.md
+│   │   ├── IMAGE_GENERATION_README.md
+│   │   └── MARKDOWN_SUPPORT.md
+│   ├── testing/              # 测试文档
+│   │   ├── TEST_ASYNC.md
+│   │   ├── TEST_DEDUPLICATION_RESULT.md
+│   │   ├── TEST_MARKDOWN.md
+│   │   ├── TEST_RESULTS.md
+│   │   ├── TESTING_GUIDE.txt
+│   │   └── TESTING_IMAGE_GEN.md
+│   └── architecture/         # 架构文档
+│       ├── ARCHITECTURE.md
+│       ├── CONFIG.md
+│       ├── DEPLOYMENT_SUMMARY.md
+│       ├── MARKDOWN_DEPLOYMENT.md
+│       ├── MARKDOWN_IMPLEMENTATION.md
+│       └── PROJECT_SUMMARY.md
 │
 ├── Dockerfile                 # Docker 镜像构建文件
 ├── docker-compose.yml         # Docker Compose 配置
@@ -70,10 +107,12 @@ dingtalk_bot/
 ├── start.sh                   # Systemd 一键启动脚本
 ├── stop.sh                    # Systemd 一键停止脚本
 ├── status.sh                  # Systemd 状态查看脚本
-└── check_async_status.sh      # 异步功能状态检查 ⭐
+├── check_async_status.sh      # 异步功能状态检查 ⭐
+├── verify_image_server.sh     # 图片服务器验证脚本 ⭐
+└── monitor_markdown.sh        # Markdown 功能监控 ⭐
 ```
 
-**⭐ 标记的是异步和 Markdown 功能相关文件**
+**⭐ 标记的是新增或重要功能相关文件**
 
 ## 快速开始
 
@@ -216,11 +255,15 @@ DINGTALK_CLIENT_SECRET=your_client_secret_here
 DINGTALK_APP_ID=your_app_id_here
 ```
 
-#### CodeBuddy API 配置
+#### 图片服务器配置 ⭐
 
 ```bash
-# API 地址和认证
-CODEBUDDY_API_URL=http://IP:PORT/agent
+# 图片服务器配置
+IMAGE_SERVER_URL=http://119.28.50.67/dingtalk-images
+IMAGE_SERVER_PORT=8090
+
+# CodeBuddy API 配置
+CODEBUDDY_API_URL=http://119.28.50.67/agent
 CODEBUDDY_API_TOKEN=your_token_here
 ```
 
@@ -634,6 +677,32 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 更新日志
 
+### v1.2.0 (2026-03-01)
+
+- ✨ 新增图片生成功能
+  - 文生图：通过文本描述生成图片
+  - 图生图：上传图片进行编辑和变换
+  - HTTP静态服务器部署（端口8090）
+  - Nginx反向代理配置
+  - 钉钉原生图片消息展示
+- 🔧 修复消息去重机制
+  - 解决重复消息问题
+  - 优化消息处理逻辑
+- 🔧 修复图片服务器访问问题
+  - 配置IMAGE_SERVER_URL环境变量
+  - 配置Nginx反向代理解决端口访问限制
+- 🔧 修复CodeBuddy API访问问题
+  - 配置Nginx反向代理支持/agent路径
+  - 超时设置优化（300秒）
+  - 禁用缓冲支持流式响应
+- 📁 项目结构重组
+  - 创建docs/目录分类管理文档
+  - deployment/部署文档
+  - troubleshooting/故障排查文档
+  - features/功能文档
+  - testing/测试文档
+  - architecture/架构文档
+
 ### v1.1.0 (2026-02-28)
 
 - ✨ 新增 Markdown 消息格式支持
@@ -679,6 +748,6 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 文档版本
 
-- 版本: 1.1.0
-- 最后更新: 2026-02-28
+- 版本: 1.2.0
+- 最后更新: 2026-03-01
 - 维护者: CodeBuddy Team
