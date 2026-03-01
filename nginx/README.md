@@ -52,6 +52,7 @@ sudo systemctl reload nginx
 - **超时**: 300秒（支持长时间处理）
 - **缓冲**: 禁用（支持流式响应）
 - **CORS**: 支持跨域访问
+- **安全**: Bearer Token认证 🔐
 
 ## 🧪 验证配置
 
@@ -65,14 +66,31 @@ curl -I http://your-server-ip/dingtalk-images/test.jpg
 
 ### 测试API代理
 
+**使用正确的Token（应该成功）**:
 ```bash
 curl -X POST http://your-server-ip/agent \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_token" \
+  -H "Authorization: Bearer 06d56890c91f19135e6d8020e8448a35b31cb9b7cedd7da2842f0616ccadeac4" \
   -d '{"prompt":"test"}'
 ```
 
 应该返回 200 状态码
+
+**不带Token或错误Token（应该返回401）**:
+```bash
+# 不带Authorization头
+curl -X POST http://your-server-ip/agent \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"test"}'
+
+# 错误的Token
+curl -X POST http://your-server-ip/agent \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer wrong_token" \
+  -d '{"prompt":"test"}'
+```
+
+应该返回 401 Unauthorized
 
 ## 🔍 故障排查
 
@@ -113,6 +131,12 @@ ps aux | grep codebuddy
 
 ## 📝 常见问题
 
+### Q: 401 Unauthorized
+A: Authorization token验证失败。请检查：
+- 请求头是否包含 `Authorization: Bearer <token>`
+- Token是否正确（区分大小写）
+- Token前缀必须是 `Bearer ` (注意空格)
+
 ### Q: 502 Bad Gateway
 A: 检查后端服务（8090和3000端口）是否正常运行
 
@@ -125,10 +149,42 @@ A: 检查文件权限和Nginx用户权限
 ### Q: CORS错误
 A: 配置已包含CORS支持，如仍有问题检查客户端请求头
 
+## 🔐 安全说明
+
+### Bearer Token认证
+
+CodeBuddy API `/agent` 路径已启用 Bearer Token 认证保护。
+
+**配置的Token**:
+```
+Bearer 06d56890c91f19135e6d8020e8448a35b31cb9b7cedd7da2842f0616ccadeac4
+```
+
+**使用方法**:
+```bash
+curl -X POST http://your-server-ip/agent \
+  -H "Authorization: Bearer 06d56890c91f19135e6d8020e8448a35b31cb9b7cedd7da2842f0616ccadeac4" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"your request"}'
+```
+
+**注意事项**:
+- 所有访问 `/agent` 的请求都必须携带正确的 Authorization 头
+- Token 必须完全匹配，包括 `Bearer ` 前缀
+- 无效或缺失的 token 会返回 401 Unauthorized
+- Token 应该妥善保管，不要泄露给未授权用户
+
+**修改Token**:
+如需更换Token，修改配置文件中的 `$valid_token` 变量：
+```nginx
+set $valid_token "Bearer your_new_token_here";
+```
+
 ## 🔐 安全建议
 
-1. **使用HTTPS**: 生产环境建议配置SSL证书
-2. **限制访问**: 可添加IP白名单限制访问
+1. **使用HTTPS**: 生产环境建议配置SSL证书，防止Token在传输中被窃取
+2. **定期更换Token**: 建议定期更换 Bearer Token
+3. **限制访问**: 可添加IP白名单限制访问
 3. **访问日志**: 定期检查访问日志，防止滥用
 4. **防火墙**: 确保防火墙规则正确配置
 
