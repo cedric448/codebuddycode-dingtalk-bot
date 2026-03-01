@@ -1,0 +1,16 @@
+[Unit]
+Description=DingTalk Bot Image HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/project-wb/dingtalk_bot
+ExecStart=/root/project-wb/dingtalk_bot/venv/bin/python /root/project-wb/dingtalk_bot/image_server.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/image-server.log
+StandardError=append:/var/log/image-server.log
+
+[Install]
+WantedBy=multi-user.target

@@ -64,52 +64,42 @@ dingtalk_bot/
 ├── requirements.txt           # Python 依赖
 ├── .env                       # 环境变量配置
 ├── .env.example               # 环境变量示例
-├── dingtalk-bot.service       # systemd 服务文件
 ├── images/                    # 图片存储目录
 ├── imagegen/                  # 生成图片存储目录 ⭐
 │
 ├── README.md                  # 本文档
-├── docs/                      # 文档目录 ⭐
+├── docs/                      # 📚 文档目录 ⭐
+│   ├── README.md             # 文档导航索引
 │   ├── deployment/           # 部署相关文档
-│   │   ├── IMAGE_SERVER_DEPLOYMENT.md
-│   │   └── IMAGE_SERVER_FIX.md
 │   ├── troubleshooting/      # 故障排查文档
-│   │   ├── BUGFIX.md
-│   │   ├── BUGFIX_MESSAGE_DEDUPLICATION.md
-│   │   ├── IMAGE_SEND_ISSUE.md
-│   │   └── TROUBLESHOOTING.md
 │   ├── features/             # 功能文档
-│   │   ├── ASYNC_FEATURE.md
-│   │   ├── IMAGE_GENERATION_README.md
-│   │   └── MARKDOWN_SUPPORT.md
 │   ├── testing/              # 测试文档
-│   │   ├── TEST_ASYNC.md
-│   │   ├── TEST_DEDUPLICATION_RESULT.md
-│   │   ├── TEST_MARKDOWN.md
-│   │   ├── TEST_RESULTS.md
-│   │   ├── TESTING_GUIDE.txt
-│   │   └── TESTING_IMAGE_GEN.md
 │   └── architecture/         # 架构文档
-│       ├── ARCHITECTURE.md
-│       ├── CONFIG.md
-│       ├── DEPLOYMENT_SUMMARY.md
-│       ├── MARKDOWN_DEPLOYMENT.md
-│       ├── MARKDOWN_IMPLEMENTATION.md
-│       └── PROJECT_SUMMARY.md
+│
+├── nginx/                     # ⚙️ Nginx配置 ⭐
+│   ├── README.md             # Nginx配置说明
+│   └── dingtalk-bot.conf     # Nginx主配置文件
+│
+├── systemd/                   # 🔧 Systemd服务配置 ⭐
+│   ├── README.md             # Systemd配置说明
+│   ├── dingtalk-bot.service  # 钉钉机器人服务
+│   └── image-server.service  # 图片服务器服务
+│
+├── scripts/                   # 📜 管理脚本 ⭐
+│   ├── README.md             # 脚本使用说明
+│   ├── start.sh              # 一键启动脚本
+│   ├── stop.sh               # 停止服务脚本
+│   ├── status.sh             # 状态查看脚本
+│   ├── docker-deploy.sh      # Docker部署脚本
+│   ├── docker-start.sh       # Docker启动脚本
+│   ├── docker-stop.sh        # Docker停止脚本
+│   ├── docker-status.sh      # Docker状态脚本
+│   ├── check_async_status.sh # 异步功能检查
+│   ├── verify_image_server.sh # 图片服务器验证
+│   └── monitor_markdown.sh   # Markdown监控
 │
 ├── Dockerfile                 # Docker 镜像构建文件
-├── docker-compose.yml         # Docker Compose 配置
-├── docker-deploy.sh           # Docker 一键部署脚本
-├── docker-start.sh            # Docker 启动脚本
-├── docker-stop.sh             # Docker 停止脚本
-├── docker-status.sh           # Docker 状态查看脚本
-│
-├── start.sh                   # Systemd 一键启动脚本
-├── stop.sh                    # Systemd 一键停止脚本
-├── status.sh                  # Systemd 状态查看脚本
-├── check_async_status.sh      # 异步功能状态检查 ⭐
-├── verify_image_server.sh     # 图片服务器验证脚本 ⭐
-└── monitor_markdown.sh        # Markdown 功能监控 ⭐
+└── docker-compose.yml         # Docker Compose 配置
 ```
 
 **⭐ 标记的是新增或重要功能相关文件**
@@ -142,16 +132,16 @@ sudo ./docker-deploy.sh
 
 ```bash
 # 查看状态
-./docker-status.sh
+./scripts/docker-status.sh
 
 # 查看日志
 docker-compose logs -f
 
 # 停止服务
-./docker-stop.sh
+./scripts/docker-stop.sh
 
 # 启动服务
-./docker-start.sh
+./scripts/docker-start.sh
 
 # 重启服务
 docker-compose restart
@@ -182,7 +172,7 @@ Docker 部署使用以下数据卷：
 
 ```bash
 cd /root/project-wb/dingtalk_bot
-sudo ./start.sh
+sudo ./scripts/start.sh
 ```
 
 该脚本会自动：
@@ -197,13 +187,13 @@ sudo ./start.sh
 
 ```bash
 # 查看状态
-./status.sh
+./scripts/status.sh
 
 # 停止服务
-sudo ./stop.sh
+sudo ./scripts/stop.sh
 
 # 启动服务
-sudo ./start.sh
+sudo ./scripts/start.sh
 
 # 重启服务
 sudo systemctl restart dingtalk-bot
@@ -228,7 +218,8 @@ cp .env.example .env
 vim .env
 
 # 安装 Systemd 服务
-sudo cp dingtalk-bot.service /etc/systemd/system/
+sudo cp systemd/dingtalk-bot.service /etc/systemd/system/
+sudo cp systemd/image-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl start dingtalk-bot
 sudo systemctl enable dingtalk-bot
@@ -434,13 +425,13 @@ docker-compose exec dingtalk-bot bash
 
 ```bash
 # 查看状态
-./status.sh
+./scripts/status.sh
 
 # 启动服务
-sudo ./start.sh
+sudo ./scripts/start.sh
 
 # 停止服务
-sudo ./stop.sh
+sudo ./scripts/stop.sh
 
 # 重启服务
 sudo systemctl restart dingtalk-bot

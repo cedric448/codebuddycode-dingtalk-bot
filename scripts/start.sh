@@ -53,7 +53,7 @@ fi
 # 检查 systemd 服务文件
 if [ ! -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
     echo -e "${YELLOW}Systemd 服务文件不存在，正在安装...${NC}"
-    cp "${SERVICE_NAME}.service" /etc/systemd/system/
+    cp "systemd/${SERVICE_NAME}.service" /etc/systemd/system/
     systemctl daemon-reload
     echo -e "${GREEN}Systemd 服务文件安装成功${NC}"
 fi
