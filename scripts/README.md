@@ -22,6 +22,7 @@
 - **check_async_status.sh** - 检查异步功能状态
 - **monitor_markdown.sh** - Markdown功能监控
 - **verify_image_server.sh** - 验证图片服务器状态
+- **test_api_auth.sh** - 测试API认证保护 🔐
 
 ## 🚀 使用说明
 
@@ -110,6 +111,32 @@ sudo ./scripts/docker-deploy.sh
 ```
 
 监控Markdown消息发送情况。
+
+#### 测试API认证保护
+```bash
+./scripts/test_api_auth.sh
+```
+
+检查项：
+- 无Token访问是否被拒绝（401）
+- 错误Token访问是否被拒绝（401）
+- 正确Token访问是否允许（200）
+- Token格式错误是否被拒绝（401）
+- 响应消息是否正确
+
+**输出示例**：
+```
+测试1: 无Authorization头访问
+✓ 通过: 返回401 Unauthorized
+
+测试2: 使用错误Token访问
+✓ 通过: 返回401 Unauthorized
+
+测试3: 使用正确Token访问
+✓ 通过: 返回200 OK
+
+所有测试通过! ✓
+```
 
 ## 📋 脚本详细说明
 
@@ -204,6 +231,58 @@ sudo ./scripts/docker-deploy.sh
 ```bash
 ./scripts/check_async_status.sh
 ```
+
+### test_api_auth.sh - API认证保护测试 🔐
+
+**功能**：
+1. 测试无Token访问（应返回401）
+2. 测试错误Token访问（应返回401）
+3. 测试正确Token访问（应返回200）
+4. 测试Token格式错误（应返回401）
+5. 验证错误响应消息
+
+**使用**：
+```bash
+./scripts/test_api_auth.sh
+```
+
+**输出示例**：
+```
+========================================
+   API 认证测试
+========================================
+
+测试1: 无Authorization头访问
+✓ 通过: 返回401 Unauthorized
+
+测试2: 使用错误Token访问
+✓ 通过: 返回401 Unauthorized
+
+测试3: 使用正确Token访问
+✓ 通过: 返回200 OK
+
+测试4: Token缺少Bearer前缀
+✓ 通过: 返回401 Unauthorized
+
+测试5: 检查401响应体
+✓ 通过: 响应包含Unauthorized消息
+
+========================================
+   所有测试通过! ✓
+========================================
+
+认证保护工作正常:
+  - 无Token访问: 拒绝
+  - 错误Token访问: 拒绝
+  - 正确Token访问: 允许
+  - 格式错误Token: 拒绝
+```
+
+**何时使用**：
+- 部署或更新Nginx配置后
+- 验证安全防护是否生效
+- 定期安全检查
+- 排查认证问题
 
 ## 🔧 自定义脚本
 
