@@ -11,6 +11,8 @@ import requests
 from config import (
     CODEBUDDY_API_URL, 
     CODEBUDDY_API_TOKEN,
+    CODEBUDDY_TIMEOUT,
+    CODEBUDDY_RETRY_COUNT,
     CODEBUDDY_ADD_DIR,
     CODEBUDDY_MODEL,
     CODEBUDDY_CONTINUE,
@@ -27,6 +29,8 @@ class CodebuddyClient:
     def __init__(self):
         self.api_url = CODEBUDDY_API_URL
         self.api_token = CODEBUDDY_API_TOKEN
+        self.timeout = CODEBUDDY_TIMEOUT
+        self.retry_count = CODEBUDDY_RETRY_COUNT
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_token}"
@@ -70,81 +74,128 @@ class CodebuddyClient:
 
         return payload
 
-    def chat(self, text: str, image_path: str = None) -> str:
+    def chat(self, text: str, image_path: str = None, retry_count: int = None) -> str:
         """
         发送消息到CodeBuddy并获取回复
 
         Args:
             text: 文字内容
-            image_path: 图片本地路径（可选）
+            image_path: 图片本地路径(可选)
+            retry_count: 重试次数(默认使用配置中的值)
 
         Returns:
             CodeBuddy的回复内容
         """
-        try:
-            payload = self._build_payload(text, image_path)
-
-            logger.info(f"发送请求到CodeBuddy: prompt={text[:50]}...")
-            if image_path:
-                logger.info(f"附加图片路径: {image_path}")
-
-            logger.info(f"API URL: {self.api_url}")
-            logger.info(f"Request payload: {payload}")
-
-            response = requests.post(
-                self.api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=300
-            )
-
-            # 强制使用UTF-8编码解析响应
-            response.encoding = 'utf-8'
-
-            # 获取原始字节并用UTF-8解码
-            response_text = response.content.decode('utf-8', errors='replace')
-
-            logger.info(f"Response status: {response.status_code}")
-            logger.info(f"Response text: {response_text[:500]}")
-
-            response.raise_for_status()
-
-            # 尝试解析JSON响应，如果失败则返回纯文本
+        if retry_count is None:
+            retry_count = self.retry_count
+            
+        last_error = None
+        
+        for attempt in range(retry_count + 1):
             try:
-                result = response.json()
-                logger.info(f"JSON parsed successfully")
-            except json.JSONDecodeError:
-                # 直接返回UTF-8解码后的纯文本响应
-                logger.info(f"Returning plain text response")
-                return response_text.strip()
+                payload = self._build_payload(text, image_path)
 
-            # 提取回复内容
-            if isinstance(result, dict):
-                # 根据返回格式提取内容
-                reply = result.get("content") or result.get("response") or result.get("message") or result.get("result", "")
-                if isinstance(reply, dict):
-                    reply = reply.get("text", "")
-                logger.info(f"Reply extracted: {str(reply)[:100]}")
-                return str(reply)
-            elif isinstance(result, str):
-                return result
-            else:
-                return str(result)
+                if attempt > 0:
+                    logger.info(f"第 {attempt + 1} 次尝试...")
+                
+                logger.info(f"发送请求到CodeBuddy: prompt={text[:50]}...")
+                if image_path:
+                    logger.info(f"附加图片路径: {image_path}")
 
-        except requests.exceptions.Timeout:
-            logger.error("CodeBuddy API 请求超时")
-            return "请求超时，请稍后重试。"
-        except requests.exceptions.RequestException as e:
-            logger.error(f"CodeBuddy API 请求失败: {e}")
-            return f"调用CodeBuddy失败: {str(e)}"
-        except json.JSONDecodeError as e:
-            logger.error(f"CodeBuddy API 响应解析失败: {e}")
-            return "响应解析失败，请稍后重试。"
-        except Exception as e:
-            logger.error(f"CodeBuddy API 调用异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return f"处理异常: {str(e)}"
+                logger.info(f"API URL: {self.api_url}")
+                logger.info(f"Request payload: {payload}")
+
+                # 使用配置的超时时间
+                response = requests.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+
+                # 强制使用UTF-8编码解析响应
+                response.encoding = 'utf-8'
+
+                # 获取原始字节并用UTF-8解码
+                response_text = response.content.decode('utf-8', errors='replace')
+
+                logger.info(f"Response status: {response.status_code}")
+                logger.info(f"Response text: {response_text[:500]}")
+
+                response.raise_for_status()
+
+                # 尝试解析JSON响应,如果失败则返回纯文本
+                try:
+                    result = response.json()
+                    logger.info(f"JSON parsed successfully")
+                except json.JSONDecodeError:
+                    # 直接返回UTF-8解码后的纯文本响应
+                    logger.info(f"Returning plain text response")
+                    return response_text.strip()
+
+                # 提取回复内容
+                if isinstance(result, dict):
+                    # 根据返回格式提取内容
+                    reply = result.get("content") or result.get("response") or result.get("message") or result.get("result", "")
+                    if isinstance(reply, dict):
+                        reply = reply.get("text", "")
+                    logger.info(f"Reply extracted: {str(reply)[:100]}")
+                    return str(reply)
+                elif isinstance(result, str):
+                    return result
+                else:
+                    return str(result)
+
+            except requests.exceptions.Timeout as e:
+                last_error = e
+                logger.warning(f"第 {attempt + 1} 次请求超时")
+                if attempt < retry_count:
+                    continue
+                logger.error("CodeBuddy API 请求超时(已重试所有次数)")
+                return "请求超时,服务器响应时间过长。已尝试多次重试,请稍后再试或联系管理员检查服务器状态。"
+                
+            except requests.exceptions.HTTPError as e:
+                # HTTP错误(包括504)
+                last_error = e
+                status_code = e.response.status_code if e.response else None
+                logger.warning(f"第 {attempt + 1} 次请求失败: HTTP {status_code}")
+                
+                if status_code == 504:  # Gateway Timeout
+                    if attempt < retry_count:
+                        import time
+                        time.sleep(2)  # 等待2秒后重试
+                        continue
+                    logger.error("CodeBuddy API 网关超时(已重试所有次数)")
+                    return "网关超时(504)。服务器处理时间过长,请尝试简化您的请求,或稍后再试。"
+                else:
+                    # 其他HTTP错误不重试
+                    logger.error(f"CodeBuddy API HTTP错误: {status_code} - {str(e)}")
+                    return f"API请求失败(HTTP {status_code}): {str(e)}"
+                    
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                logger.warning(f"第 {attempt + 1} 次请求异常: {str(e)}")
+                if attempt < retry_count:
+                    import time
+                    time.sleep(2)
+                    continue
+                logger.error(f"CodeBuddy API 请求失败(已重试所有次数): {e}")
+                return f"调用CodeBuddy失败: {str(e)}"
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"CodeBuddy API 响应解析失败: {e}")
+                return "响应解析失败,请稍后重试。"
+                
+            except Exception as e:
+                logger.error(f"CodeBuddy API 调用异常: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return f"处理异常: {str(e)}"
+        
+        # 如果所有重试都失败
+        if last_error:
+            return f"请求失败(已重试 {retry_count} 次): {str(last_error)}"
+        return "未知错误"
 
     def chat_text_only(self, text: str) -> str:
         """

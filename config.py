@@ -18,6 +18,8 @@ DINGTALK_APP_ID = os.getenv("DINGTALK_APP_ID", "")
 # CodeBuddy API配置
 CODEBUDDY_API_URL = os.getenv("CODEBUDDY_API_URL", "http://your-server-ip:port/agent")
 CODEBUDDY_API_TOKEN = os.getenv("CODEBUDDY_API_TOKEN", "")
+CODEBUDDY_TIMEOUT = int(os.getenv("CODEBUDDY_TIMEOUT", "600"))  # API超时时间(秒),默认10分钟
+CODEBUDDY_RETRY_COUNT = int(os.getenv("CODEBUDDY_RETRY_COUNT", "2"))  # 重试次数,默认2次
 
 # CodeBuddy API 请求参数配置
 CODEBUDDY_ADD_DIR = os.getenv("CODEBUDDY_ADD_DIR", "/root/project-wb/bot-workspace")  # 可配置的工作目录
