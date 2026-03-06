@@ -329,11 +329,12 @@ class MyCallbackHandler(ChatbotHandler):
             prompt = image_generator.extract_prompt(user_text, gen_type)
             logger.info(f"提取的提示词: {prompt}")
             
-            generated_image_path = None
+            result = None
+            model_info = "未知"
             
             if gen_type == 'text-to-image':
                 # 文生图
-                generated_image_path = image_generator.generate_text_to_image(prompt)
+                result = image_generator.generate_text_to_image(prompt)
             elif gen_type == 'image-to-image':
                 # 图生图 - 需要先下载源图片
                 if not image_download_code:
@@ -345,11 +346,17 @@ class MyCallbackHandler(ChatbotHandler):
                     self.reply_text("源图片下载失败", message)
                     return
                 
-                generated_image_path = image_generator.generate_image_to_image(prompt, source_image_path)
+                result = image_generator.generate_image_to_image(prompt, source_image_path)
+            
+            # 解包结果: (图片路径, 模型信息)
+            if result:
+                generated_image_path, model_info = result
+            else:
+                generated_image_path = None
             
             # 发送生成的图片
             if generated_image_path:
-                logger.info(f"图片生成成功,准备发送: {generated_image_path}")
+                logger.info(f"图片生成成功,准备发送: {generated_image_path}, 模型: {model_info}")
                 
                 # 获取图片文件名
                 import os
@@ -361,18 +368,23 @@ class MyCallbackHandler(ChatbotHandler):
                 
                 logger.info(f"图片 URL: {image_url}")
                 
-                # 使用链接卡片格式发送图片 (支持图片预览)
-                card_title = "🎨 图片生成完成!"
-                card_text = f"提示词: {prompt}\n\n文件大小: {file_size:.1f} KB\n生成类型: {gen_type}\n\n点击查看完整图片"
+                # 构建消息内容
+                card_title = f"🎨 图片生成完成!\n提示词: {prompt}\n• 文件大小: {file_size:.1f} KB\n• 生成类型: {gen_type}"
                 
-                self.reply_link_card(
+                # 检查会话类型
+                conv_type = getattr(message, 'conversation_type', '1')
+                is_group_chat = (conv_type == '2')
+                logger.info(f"准备发送图片 [会话类型: {'群聊' if is_group_chat else '单聊'}]")
+                
+                # 单聊和群聊都使用图文消息(FeedCard)
+                self.reply_feed_card(
                     title=card_title,
-                    text=card_text,
+                    text="点击查看大图",
                     image_url=image_url,
                     link_url=image_url,
                     incoming_message=message
                 )
-                logger.info("已通过链接卡片发送图片 URL")
+                logger.info("已通过图文消息发送图片")
             else:
                 # 图片生成失败,记录日志但不发送错误消息
                 # (可能是超时或网络问题,避免重复消息)
@@ -683,9 +695,106 @@ class MyCallbackHandler(ChatbotHandler):
             )
             response.raise_for_status()
             
-            logger.info(f"链接卡片发送成功，钉钉响应: {response.text}")
+            logger.info(f"链接卡片发送成功,钉钉响应: {response.text}")
         except Exception as e:
             logger.error(f"链接卡片发送失败: {e}, response={response.text if response else 'None'}")
+            return None
+        return response.json() if response.text else None
+
+    def reply_action_card(self, title: str, text: str, image_url: str, btn_text: str, btn_url: str, incoming_message: ChatbotMessage):
+        """
+        发送交互式卡片消息 - 支持嵌入图片且不显示URL
+        
+        Args:
+            title: 卡片标题
+            text: 卡片Markdown文本
+            image_url: 图片URL(会嵌入到text中)
+            btn_text: 按钮文字
+            btn_url: 按钮跳转链接
+            incoming_message: 原始消息对象
+        """
+        import json
+        import requests
+        
+        logger.info(f"准备发送交互式卡片: 标题={title}, 图片={image_url}")
+        
+        request_headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Accept': '*/*',
+        }
+        
+        # 构建完整的 Markdown 文本(包含图片)
+        full_text = f"{text}\n\n![图片]({image_url})"
+        
+        values = {
+            'msgtype': 'actionCard',
+            'actionCard': {
+                'title': title,
+                'text': full_text,
+                'btnOrientation': '0',  # 按钮竖直排列
+                'singleTitle': btn_text,
+                'singleURL': btn_url
+            }
+        }
+        try:
+            response = requests.post(
+                incoming_message.session_webhook,
+                headers=request_headers,
+                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
+            )
+            response.raise_for_status()
+            
+            logger.info(f"交互式卡片发送成功,钉钉响应: {response.text}")
+        except Exception as e:
+            logger.error(f"交互式卡片发送失败: {e}, response={response.text if response else 'None'}")
+            return None
+        return response.json() if response.text else None
+
+    def reply_feed_card(self, title: str, text: str, image_url: str, link_url: str, incoming_message: ChatbotMessage):
+        """
+        发送图文消息(FeedCard) - 单聊和群聊都支持
+        
+        Args:
+            title: 消息标题
+            text: 消息描述
+            image_url: 图片URL
+            link_url: 点击跳转链接
+            incoming_message: 原始消息对象
+        """
+        import json
+        import requests
+        
+        logger.info(f"准备发送图文消息(FeedCard): 标题={title}, 图片={image_url}")
+        
+        request_headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Accept': '*/*',
+        }
+        
+        values = {
+            'msgtype': 'feedCard',
+            'feedCard': {
+                'links': [
+                    {
+                        'title': title,
+                        'messageURL': link_url,
+                        'picURL': image_url
+                    }
+                ]
+            }
+        }
+        
+        try:
+            response = requests.post(
+                incoming_message.session_webhook,
+                headers=request_headers,
+                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
+            )
+            response.raise_for_status()
+            
+            logger.info(f"图文消息发送成功,钉钉响应: {response.text}")
+        except Exception as e:
+            logger.error(f"图文消息发送失败: {e}, response={response.text if response else 'None'}")
             return None
         return response.json() if response.text else None
 
@@ -834,13 +943,13 @@ class MyCallbackHandler(ChatbotHandler):
             description = description.strip()
             
             # 截取描述文本(链接卡片有长度限制)
-            max_desc_length = 200
+            max_desc_length = 150
             if len(description) > max_desc_length:
                 description = description[:max_desc_length] + "..."
             
             # 使用链接卡片格式发送图片 (支持图片预览)
-            card_title = "🎨 图片已生成!"
-            card_text = f"{description}\n\n文件大小: {file_size:.1f} KB\n点击查看完整图片"
+            card_title = "🎨 图片生成完成!"
+            card_text = f"{description}\n图片保存在:\n图片信息:\n• 文件大小: {file_size:.1f} KB\n• 访问链接: {new_filename}\n提示: 点击图片可查看大图"
             
             self.reply_link_card(
                 title=card_title,

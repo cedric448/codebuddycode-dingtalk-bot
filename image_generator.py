@@ -14,8 +14,10 @@ import requests
 from config import (
     CODEBUDDY_API_URL,
     CODEBUDDY_API_TOKEN,
-    BASE_DIR
+    BASE_DIR,
+    IMAGE_GENERATOR_TYPE
 )
+from gemini_image_generator import gemini_image_generator
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +27,11 @@ class ImageGenerator:
     
     # 生图关键词
     TEXT_TO_IMAGE_KEYWORDS = [
-        "生成图片", "生成图像", "生成图", "生成一张", "生成一幅",
-        "画一张", "画一幅", "画个", "画一个",
+        "生成图片", "生成图像", "生成图", "生成一张", "生成一幅", "生成个", "生成一个图",
+        "画一张", "画一幅", "画个", "画一个", "画张",
         "帮我画", "画一下", "给我画",
-        "生图", "创建图片", "制作图片", "做一张图",
-        "绘制", "作图"
+        "生图", "创建图片", "制作图片", "做一张图", "做张图", "做个图", "做个",
+        "绘制", "作图", "draw", "generate image"
     ]
     
     IMAGE_TO_IMAGE_KEYWORDS = [
@@ -100,9 +102,35 @@ class ImageGenerator:
         
         return prompt
     
-    def generate_text_to_image(self, prompt: str) -> Optional[str]:
+    def generate_text_to_image(self, prompt: str) -> Optional[Tuple[str, str]]:
         """
         文生图
+        
+        Args:
+            prompt: 图片描述提示词
+            
+        Returns:
+            (图片本地路径, 模型信息) 元组,失败返回 None
+        """
+        # 优先使用 Gemini 生成器(如果已启用)
+        if IMAGE_GENERATOR_TYPE == "gemini" and gemini_image_generator.is_enabled():
+            logger.info(f"使用 Gemini 生成器进行文生图")
+            result = gemini_image_generator.generate_text_to_image(prompt)
+            if result:
+                return result  # Gemini 已经返回 (path, model_info)
+            # Gemini 失败,回退到 CodeBuddy
+            logger.warning("Gemini 生成失败,回退到 CodeBuddy")
+        
+        # 使用 CodeBuddy 生成器
+        logger.info(f"使用 CodeBuddy 生成器进行文生图")
+        path = self._generate_text_to_image_codebuddy(prompt)
+        if path:
+            return (path, "CodeBuddy")
+        return None
+    
+    def _generate_text_to_image_codebuddy(self, prompt: str) -> Optional[str]:
+        """
+        使用 CodeBuddy API 进行文生图
         
         Args:
             prompt: 图片描述提示词
@@ -154,9 +182,36 @@ class ImageGenerator:
             logger.error(traceback.format_exc())
             return None
     
-    def generate_image_to_image(self, prompt: str, source_image_path: str) -> Optional[str]:
+    def generate_image_to_image(self, prompt: str, source_image_path: str) -> Optional[Tuple[str, str]]:
         """
         图生图
+        
+        Args:
+            prompt: 修改描述提示词
+            source_image_path: 源图片路径
+            
+        Returns:
+            (图片本地路径, 模型信息) 元组,失败返回 None
+        """
+        # 优先使用 Gemini 生成器(如果已启用)
+        if IMAGE_GENERATOR_TYPE == "gemini" and gemini_image_generator.is_enabled():
+            logger.info(f"使用 Gemini 生成器进行图生图")
+            result = gemini_image_generator.generate_image_to_image(prompt, source_image_path)
+            if result:
+                return result  # Gemini 已经返回 (path, model_info)
+            # Gemini 失败,回退到 CodeBuddy
+            logger.warning("Gemini 生成失败,回退到 CodeBuddy")
+        
+        # 使用 CodeBuddy 生成器
+        logger.info(f"使用 CodeBuddy 生成器进行图生图")
+        path = self._generate_image_to_image_codebuddy(prompt, source_image_path)
+        if path:
+            return (path, "CodeBuddy")
+        return None
+    
+    def _generate_image_to_image_codebuddy(self, prompt: str, source_image_path: str) -> Optional[str]:
+        """
+        使用 CodeBuddy API 进行图生图
         
         Args:
             prompt: 修改描述提示词

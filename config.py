@@ -45,3 +45,15 @@ AUTO_ENHANCE_MARKDOWN = os.getenv("AUTO_ENHANCE_MARKDOWN", "true").lower() == "t
 # 图片服务器配置
 IMAGE_SERVER_URL = os.getenv("IMAGE_SERVER_URL", "http://localhost:8090")  # 图片服务器 URL
 IMAGE_SERVER_PORT = int(os.getenv("IMAGE_SERVER_PORT", "8090"))  # 图片服务器端口
+
+# 图片生成配置
+IMAGE_GENERATOR_TYPE = os.getenv("IMAGE_GENERATOR_TYPE", "gemini")  # 图片生成方式: 'gemini' 或 'codebuddy'
+
+# Gemini (腾讯云 VOD AI) 图片生成配置
+TENCENTCLOUD_SECRET_ID = os.getenv("TENCENTCLOUD_SECRET_ID", "")  # 腾讯云 SecretId
+TENCENTCLOUD_SECRET_KEY = os.getenv("TENCENTCLOUD_SECRET_KEY", "")  # 腾讯云 SecretKey
+SUB_APP_ID = os.getenv("SUB_APP_ID", "")  # VOD 应用 ID
+MODEL_NAME = os.getenv("MODEL_NAME", "GEM")  # 模型名称
+MODEL_VERSION = os.getenv("MODEL_VERSION", "3.1")  # 模型版本
+API_ENDPOINT = os.getenv("API_ENDPOINT", "vod.tencentcloudapi.com")  # API 端点
+API_REGION = os.getenv("API_REGION", "ap-guangzhou")  # API 区域
