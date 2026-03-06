@@ -155,20 +155,31 @@ class CodebuddyClient:
                 return "请求超时,服务器响应时间过长。已尝试多次重试,请稍后再试或联系管理员检查服务器状态。"
                 
             except requests.exceptions.HTTPError as e:
-                # HTTP错误(包括504)
+                # HTTP错误(包括502, 503, 504)
                 last_error = e
                 status_code = e.response.status_code if e.response else None
                 logger.warning(f"第 {attempt + 1} 次请求失败: HTTP {status_code}")
                 
-                if status_code == 504:  # Gateway Timeout
+                # 对可重试的网关错误进行重试
+                if status_code in [502, 503, 504]:
                     if attempt < retry_count:
                         import time
-                        time.sleep(2)  # 等待2秒后重试
+                        # 根据错误类型调整等待时间
+                        wait_time = 3 if status_code == 502 else 2
+                        logger.info(f"等待 {wait_time} 秒后重试...")
+                        time.sleep(wait_time)
                         continue
-                    logger.error("CodeBuddy API 网关超时(已重试所有次数)")
-                    return "网关超时(504)。服务器处理时间过长,请尝试简化您的请求,或稍后再试。"
+                    
+                    # 所有重试都失败后,返回友好的错误信息
+                    error_messages = {
+                        502: "网关错误(502)。上游服务暂时不可用,请稍后再试或联系管理员检查服务状态。",
+                        503: "服务不可用(503)。服务器暂时无法处理请求,请稍后再试。",
+                        504: "网关超时(504)。服务器处理时间过长,请尝试简化您的请求,或稍后再试。"
+                    }
+                    logger.error(f"CodeBuddy API 错误(已重试所有次数): {status_code}")
+                    return error_messages.get(status_code, f"网关错误({status_code}),请稍后再试。")
                 else:
-                    # 其他HTTP错误不重试
+                    # 其他HTTP错误不重试(如400, 401, 403, 404等)
                     logger.error(f"CodeBuddy API HTTP错误: {status_code} - {str(e)}")
                     return f"API请求失败(HTTP {status_code}): {str(e)}"
                     
