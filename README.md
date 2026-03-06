@@ -22,9 +22,11 @@
   - 可灵活配置，支持纯文本和 Markdown 混用
 - **图片生成功能**：⭐ 新功能
   - 文生图：通过文本描述生成图片
-  - 图生图：上传图片进行编辑和变换
+  - 图生图：上传图片作为参考进行风格转换和变换
+  - 纯图片分析：直接上传图片自动进行内容分析
+  - 集成Gemini图片生成器(腾讯云点播AI)
   - 自动部署HTTP静态服务器，通过nginx反向代理
-  - 钉钉原生图片消息展示
+  - 支持FeedCard图文消息格式，单聊和群聊统一展示
 - **Systemd 服务**：支持系统服务管理，开机自启
 - **日志管理**：完整的日志记录
 
@@ -57,6 +59,7 @@ dingtalk_bot/
 ├── codebuddy_client.py        # CodeBuddy API 客户端
 ├── image_manager.py           # 图片管理模块
 ├── image_generator.py         # 图片生成模块 ⭐
+├── gemini_image_generator.py  # Gemini图片生成器 ⭐
 ├── image_server.py            # HTTP图片服务器 ⭐
 ├── async_task_manager.py      # 异步任务管理器 ⭐
 ├── dingtalk_sender.py         # 钉钉主动推送客户端 ⭐
@@ -244,6 +247,18 @@ sudo tail -f /var/log/dingtalk-bot.log
 DINGTALK_CLIENT_ID=your_client_id_here
 DINGTALK_CLIENT_SECRET=your_client_secret_here
 DINGTALK_APP_ID=your_app_id_here
+```
+
+#### 图片生成器配置 ⭐
+
+```bash
+# 图片生成器类型: gemini(腾讯云点播AI) 或 codebuddy
+IMAGE_GENERATOR_TYPE=gemini
+
+# Gemini生成器配置(使用腾讯云点播AI)
+GEMINI_SECRET_ID=your_secret_id_here
+GEMINI_SECRET_KEY=your_secret_key_here
+GEMINI_REGION=ap-beijing
 ```
 
 #### 图片服务器配置 ⭐
@@ -460,8 +475,24 @@ sudo tail -f /var/log/dingtalk-bot.log
 
 ### 图片处理
 
-- **纯图片**：直接发送图片，机器人会分析图片内容
-- **文字+图片**：发送文字并附加图片，机器人会结合文字和图片进行分析
+**场景1: 纯图片分析**
+- 直接发送图片(无文字)
+- 机器人会自动使用"请分析此图片"作为提示词
+- 返回图片内容的详细分析
+
+**场景2: 文字生图**
+- 发送文字描述,例如: "生成个小狗"
+- 机器人会根据描述生成图片
+- 返回FeedCard图文消息展示
+
+**场景3: 图生图(以图为参考)**
+- 上传图片 + 发送生图关键词,例如: "生成个卡通风格的"
+- 机器人会以上传的图片为参考,生成指定风格的新图片
+- 支持风格转换、艺术化处理等
+
+**场景4: 图片问答**
+- 上传图片 + 发送问题,例如: "这是什么动物?"
+- 机器人会结合图片和文字进行回答
 
 ## 消息处理流程
 
@@ -471,10 +502,22 @@ sudo tail -f /var/log/dingtalk-bot.log
 用户发送文字 -> 机器人立即回复"收到任务" -> 调用 CodeBuddy API -> 返回结果给用户
 ```
 
-### 纯图片消息
+### 纯图片消息(自动分析)
 
 ```
-用户发送图片 -> 机器人立即回复"收到任务" -> 下载图片到本地 -> 调用 CodeBuddy API(图片路径) -> 返回结果给用户
+用户发送图片(无文字) -> 机器人回复"收到图片,正在分析中..." -> 使用缺省Prompt"请分析此图片" -> 调用CodeBuddy API -> 返回分析结果
+```
+
+### 图片生成(文生图)
+
+```
+用户发送"生成个小狗" -> 机器人回复"收到生图请求,正在处理中..." -> 调用Gemini生成器 -> 返回FeedCard图文消息展示生成的图片
+```
+
+### 图生图(以图为参考)
+
+```
+用户上传图片+"生成个卡通风格的" -> 机器人回复"收到生图请求,正在处理中..." -> 上传参考图到公网 -> 调用Gemini生成器图生图API -> 返回FeedCard图文消息展示生成的图片
 ```
 
 ### 富文本消息（文字+图片）
@@ -668,6 +711,28 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 更新日志
 
+### v1.3.0 (2026-03-06)
+
+- ✨ 新增纯图片自动分析功能
+  - 发送纯图片(无文字)时自动分析图片内容
+  - 使用缺省Prompt"请分析此图片"
+  - 支持Markdown格式返回分析结果
+- ✨ 新增图生图参考图功能
+  - 支持上传图片+生图关键词进行图生图
+  - 自动识别并切换为image-to-image模式
+  - 本地图片自动上传到公网可访问位置
+  - 参考图通过IMAGE_SERVER中转
+- ✨ 统一图片消息格式为FeedCard
+  - 单聊和群聊都使用图文消息展示
+  - 解决群聊Link消息简化问题
+  - 优化图片展示体验
+- 🔧 扩展图片生成关键词
+  - 支持"生成一个图"等更多表达方式
+  - 优化关键词检测逻辑
+- 🔧 集成Gemini图片生成器
+  - 支持腾讯云点播AI(Gemini GEM v3.1)
+  - 返回生成模型信息和详细参数
+
 ### v1.2.0 (2026-03-01)
 
 - ✨ 新增图片生成功能
@@ -739,6 +804,6 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 文档版本
 
-- 版本: 1.2.0
-- 最后更新: 2026-03-01
+- 版本: 1.3.0
+- 最后更新: 2026-03-06
 - 维护者: CodeBuddy Team
