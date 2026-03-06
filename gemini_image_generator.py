@@ -359,13 +359,28 @@ class GeminiImageGenerator:
             return None
         
         try:
-            # 如果是本地路径,需要先上传获取 URL
-            # 这里简化处理,假设已经有 URL 或者需要实现上传逻辑
+            # 如果是本地路径,需要上传到公网可访问的位置
             image_url = source_image_path
             
             if not self._is_url(source_image_path):
-                logger.error("图生图需要提供图片 URL,本地文件上传功能待实现")
-                return None
+                logger.info(f"本地图片需要上传: {source_image_path}")
+                # 将本地图片复制到IMAGE_SERVER目录
+                import shutil
+                import os
+                from config import IMAGE_SERVER_URL, BASE_DIR
+                
+                # 生成唯一文件名
+                filename = f"ref_{uuid.uuid4().hex[:16]}{os.path.splitext(source_image_path)[1]}"
+                target_dir = BASE_DIR / "imagegen"
+                target_path = target_dir / filename
+                
+                # 复制文件
+                shutil.copy(source_image_path, target_path)
+                logger.info(f"参考图片已复制到: {target_path}")
+                
+                # 构建公网URL
+                image_url = f"{IMAGE_SERVER_URL}/{filename}"
+                logger.info(f"参考图片URL: {image_url}")
             
             # 步骤1: 创建任务(带参考图片)
             task_id = self._create_aigc_task(prompt, image_url)

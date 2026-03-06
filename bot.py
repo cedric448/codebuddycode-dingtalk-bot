@@ -131,8 +131,25 @@ class MyCallbackHandler(ChatbotHandler):
                             image_download_code = item['downloadCode']
                             break
             
+            # 新增逻辑1: 只有图片没有文字 -> 图片分析
+            if has_image and image_download_code and not user_text.strip():
+                logger.info("检测到纯图片消息,进行图片分析")
+                self.reply_text("收到图片,正在分析中...", message)
+                
+                # 使用缺省prompt分析图片
+                default_prompt = "请分析此图片"
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._process_image_analysis, message, default_prompt, image_download_code)
+                
+                return AckMessage.STATUS_OK, 'ok'
+            
             # 检测是否是生图请求
             is_generation, gen_type = image_generator.detect_image_generation_request(user_text, has_image)
+            
+            # 新增逻辑2: 有图有文字且包含生图关键词 -> 图生图(以图为参考)
+            if has_image and image_download_code and is_generation:
+                logger.info("检测到图片+生图关键词,使用图生图模式")
+                gen_type = 'image-to-image'  # 强制设置为图生图
             
             if is_generation:
                 logger.info(f"检测到生图请求,类型: {gen_type}")
@@ -313,6 +330,47 @@ class MyCallbackHandler(ChatbotHandler):
                 )
             except:
                 pass
+
+    def _process_image_analysis(self, message: ChatbotMessage, prompt: str, image_download_code: str):
+        """
+        处理图片分析请求(纯图片,无文字)
+        
+        Args:
+            message: 消息对象
+            prompt: 分析提示词
+            image_download_code: 图片下载码
+        """
+        try:
+            # 下载图片
+            source_image_path = self._download_image(image_download_code)
+            if not source_image_path:
+                self.reply_text("图片下载失败", message)
+                return
+            
+            logger.info(f"图片分析: 使用提示词 '{prompt}' 分析图片 {source_image_path}")
+            
+            # 调用CodeBuddy API进行图片分析
+            from codebuddy_client import codebuddy_client
+            result = codebuddy_client.chat_with_image(prompt, source_image_path)
+            
+            if result:
+                # 使用Markdown格式发送分析结果
+                if ENABLE_MARKDOWN and markdown_formatter.is_markdown_format(result):
+                    title, md_content = markdown_formatter.convert_to_markdown(
+                        result,
+                        auto_enhance=AUTO_ENHANCE_MARKDOWN
+                    )
+                    self.reply_markdown(title, md_content, message)
+                else:
+                    self.reply_text(result, message)
+            else:
+                self.reply_text("图片分析失败", message)
+                
+        except Exception as e:
+            logger.error(f"图片分析失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self.reply_text(f"图片分析失败: {str(e)}", message)
 
     def _process_image_generation(self, message: ChatbotMessage, user_text: str, gen_type: str, image_download_code: str = None):
         """
