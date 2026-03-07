@@ -7,6 +7,7 @@
 - **Stream 模式**：基于 WebSocket 的实时消息推送
 - **群聊支持**：支持 @机器人 进行群聊互动
 - **单聊支持**：支持一对一私聊
+- **单聊/群聊能力对齐**：文本、Markdown、图片分析、文生图/图生图、FeedCard 在群聊与单聊一致可用
 - **消息类型**：
   - 纯文字处理
   - 纯图片处理（下载图片后发送到 CodeBuddy）
@@ -273,6 +274,54 @@ CODEBUDDY_API_URL=http://119.28.50.67/agent
 CODEBUDDY_API_TOKEN=your_token_here
 ```
 
+#### Nginx 反向代理配置（/agent 与 /dingtalk-images）⭐
+
+> 不要在文档中填写真实 Token/密钥，仅保留占位符。
+
+```nginx
+server {
+    listen 80;
+    server_name <PUBLIC_IP_OR_DOMAIN>;
+
+    # CodeBuddy API
+    location /agent {
+        # 可选：在此添加 Bearer Token 校验
+        proxy_pass http://127.0.0.1:3000/agent;
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # 图片预览服务
+    location /dingtalk-images/ {
+        proxy_pass http://127.0.0.1:8090/;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+    }
+
+    # 其他请求按需拒绝
+    location / { return 403 "Access denied.\n"; }
+}
+```
+
+#### 验证步骤 ⭐
+
+```bash
+# 1) 不带 Token 的 /agent 请求应返回 401
+curl -I http://<PUBLIC_IP_OR_DOMAIN>/agent
+
+# 2) 带 Token 的 /agent 请求应返回 200（示例）
+curl -X POST http://<PUBLIC_IP_OR_DOMAIN>/agent \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR_TOKEN>" \
+  -d '{"prompt": "test", "print": true}'
+
+# 3) 图片预览应返回 200
+curl -I http://<PUBLIC_IP_OR_DOMAIN>/dingtalk-images/
+```
+
 #### CodeBuddy API 请求参数
 
 ```bash
@@ -472,6 +521,12 @@ sudo tail -f /var/log/dingtalk-bot.log
 2. @机器人 并发送消息，例如：
    - "@CodeBuddy Bot 你好"
    - "@CodeBuddy Bot 解释一下什么是人工智能"
+
+### 单聊/群聊能力对齐说明 ⭐
+
+- 单聊与群聊支持相同的核心能力：文本对话、Markdown 回复、图片分析、文生图、图生图、异步任务推送
+- 群聊必须 @机器人 才会触发处理
+- 图片生成结果在群聊与单聊中统一使用 **FeedCard 图文消息** 展示
 
 ### 图片处理
 
@@ -711,6 +766,12 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 更新日志
 
+### v1.3.1 (2026-03-07)
+
+- 📝 更新README：补充单聊/群聊能力对齐说明
+- 📝 增加 Nginx 反向代理配置与验证步骤
+- 📝 明确配置更新要求（不写入真实 Token/密钥）
+
 ### v1.3.0 (2026-03-06)
 
 - ✨ 新增纯图片自动分析功能
@@ -804,6 +865,6 @@ sudo grep "收到消息" /var/log/dingtalk-bot.log
 
 ## 文档版本
 
-- 版本: 1.3.0
-- 最后更新: 2026-03-06
+- 版本: 1.3.1
+- 最后更新: 2026-03-07
 - 维护者: CodeBuddy Team
