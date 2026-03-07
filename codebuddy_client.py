@@ -157,7 +157,7 @@ class CodebuddyClient:
             except requests.exceptions.HTTPError as e:
                 # HTTP错误(包括502, 503, 504)
                 last_error = e
-                status_code = e.response.status_code if e.response else None
+                status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
                 logger.warning(f"第 {attempt + 1} 次请求失败: HTTP {status_code}")
                 
                 # 对可重试的网关错误进行重试
