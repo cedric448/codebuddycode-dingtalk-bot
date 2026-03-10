@@ -21,13 +21,9 @@ credentials.json
 *.log
 logs/
 
-# 图片缓存
+# 图片缓存（运行时数据）
 images/
 imagegen/
-*.jpg
-*.jpeg
-*.png
-*.gif
 
 # 备份文件
 backups/
@@ -39,6 +35,10 @@ backups/
 *.swp
 *.swo
 *~
+
+# CodeBuddy
+.codebuddy.json
+.codebuddy/
 
 # 操作系统
 .DS_Store
