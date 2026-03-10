@@ -9,8 +9,8 @@ import base64
 import uuid
 from pathlib import Path
 from typing import Optional, Tuple
-import requests
 
+from http_client import http_client
 from config import (
     CODEBUDDY_API_URL,
     CODEBUDDY_API_TOKEN,
@@ -154,7 +154,7 @@ class ImageGenerator:
             logger.info(f"调用 CodeBuddy API: {self.api_url}")
             logger.info(f"Payload: {payload}")
             
-            response = requests.post(
+            response = http_client.codebuddy_session.post(
                 self.api_url,
                 headers=self.headers,
                 json=payload,
@@ -236,7 +236,7 @@ class ImageGenerator:
             logger.info(f"调用 CodeBuddy API: {self.api_url}")
             logger.info(f"Payload: {payload}")
             
-            response = requests.post(
+            response = http_client.codebuddy_session.post(
                 self.api_url,
                 headers=self.headers,
                 json=payload,
@@ -339,7 +339,7 @@ class ImageGenerator:
                 image_url = url_match.group(0)
                 
                 # 下载图片
-                img_response = requests.get(image_url, timeout=30)
+                img_response = http_client.download_session.get(image_url, timeout=30)
                 img_response.raise_for_status()
                 
                 # 从 URL 获取文件扩展名

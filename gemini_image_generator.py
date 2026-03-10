@@ -204,20 +204,25 @@ class GeminiImageGenerator:
         self,
         task_id: str,
         max_wait_seconds: int = 300,
-        poll_interval: int = 5
+        initial_interval: float = 2.0,
+        max_interval: float = 15.0,
+        backoff_factor: float = 1.5
     ) -> Optional[str]:
         """
-        轮询等待任务完成
+        轮询等待任务完成（指数退避）
         
         Args:
             task_id: 任务ID
             max_wait_seconds: 最大等待时间(秒)
-            poll_interval: 轮询间隔(秒)
+            initial_interval: 初始轮询间隔(秒)
+            max_interval: 最大轮询间隔(秒)
+            backoff_factor: 间隔增长倍数
         
         Returns:
             生成的图片URL,超时或失败返回None
         """
         start_time = time.time()
+        interval = initial_interval
         
         logger.info(f"开始轮询任务状态 (TaskId: {task_id})")
         
@@ -241,12 +246,10 @@ class GeminiImageGenerator:
                     return file_url
                 elif status == "FAIL":
                     return None
-                elif status == "PROCESSING":
-                    # 继续等待
-                    time.sleep(poll_interval)
                 else:
-                    logger.warning(f"未知状态: {status}")
-                    time.sleep(poll_interval)
+                    # 指数退避等待
+                    time.sleep(min(interval, max_interval))
+                    interval *= backoff_factor
                     
             except Exception as err:
                 logger.error(f"查询任务详情时出错: {err}")
@@ -263,7 +266,7 @@ class GeminiImageGenerator:
         Returns:
             本地文件路径,失败返回 None
         """
-        import requests
+        from http_client import http_client
         
         try:
             if not filename:
@@ -276,7 +279,7 @@ class GeminiImageGenerator:
             local_path = self.output_dir / filename
             
             logger.info(f"下载图片: {image_url}")
-            response = requests.get(image_url, timeout=60)
+            response = http_client.download_session.get(image_url, timeout=60)
             response.raise_for_status()
             
             with open(local_path, 'wb') as f:

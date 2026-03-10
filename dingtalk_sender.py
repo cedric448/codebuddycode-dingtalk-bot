@@ -4,11 +4,13 @@
 """
 import json
 import logging
-import requests
 import os
 import base64
+import threading
+import requests
 from typing import Optional
 
+from http_client import http_client
 from config import DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET
 
 logger = logging.getLogger(__name__)
@@ -29,46 +31,48 @@ class DingTalkSender:
         self.client_secret = DINGTALK_CLIENT_SECRET
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
+        self._token_lock = threading.Lock()  # Token 缓存线程锁
         
     def _get_access_token(self) -> str:
         """
-        获取 access token
+        获取 access token（线程安全）
         
         Returns:
             access token
         """
         import time
         
-        # 如果 token 还有效，直接返回
-        if self._access_token and time.time() < self._token_expires_at:
-            return self._access_token
-        
-        # 获取新 token
-        url = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
-        
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "appKey": self.client_id,
-                    "appSecret": self.client_secret
-                },
-                timeout=10
-            )
+        with self._token_lock:
+            # 如果 token 还有效，直接返回
+            if self._access_token and time.time() < self._token_expires_at:
+                return self._access_token
             
-            response.raise_for_status()
-            data = response.json()
+            # 获取新 token
+            url = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
             
-            self._access_token = data.get("accessToken")
-            # Token 有效期 2 小时，提前 5 分钟刷新
-            self._token_expires_at = time.time() + 7200 - 300
-            
-            logger.info("成功获取 access token")
-            return self._access_token
-            
-        except Exception as e:
-            logger.error(f"获取 access token 失败: {e}")
-            raise
+            try:
+                response = http_client.dingtalk_session.post(
+                    url,
+                    json={
+                        "appKey": self.client_id,
+                        "appSecret": self.client_secret
+                    },
+                    timeout=10
+                )
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                self._access_token = data.get("accessToken")
+                # Token 有效期 2 小时，提前 5 分钟刷新
+                self._token_expires_at = time.time() + 7200 - 300
+                
+                logger.info("成功获取 access token")
+                return self._access_token
+                
+            except Exception as e:
+                logger.error(f"获取 access token 失败: {e}")
+                raise
     
     def send_text_message(
         self,
@@ -87,6 +91,7 @@ class DingTalkSender:
         Returns:
             是否发送成功
         """
+        response = None
         try:
             access_token = self._get_access_token()
             
@@ -111,7 +116,7 @@ class DingTalkSender:
             logger.info(f"发送消息到用户 {user_id}, 内容长度: {len(content)}")
             logger.debug(f"Payload: {payload}")
             
-            response = requests.post(
+            response = http_client.dingtalk_session.post(
                 url,
                 headers=headers,
                 json=payload,
@@ -170,7 +175,7 @@ class DingTalkSender:
             
             logger.info(f"发送 Markdown 消息: {title}")
             
-            response = requests.post(
+            response = http_client.dingtalk_session.post(
                 url,
                 headers=headers,
                 json=payload,
@@ -226,7 +231,7 @@ class DingTalkSender:
             
             logger.info(f"上传媒体文件: {filename}, 类型: {media_type}")
             
-            response = requests.post(
+            response = http_client.dingtalk_session.post(
                 url,
                 params=params,
                 files=files,
@@ -252,7 +257,7 @@ class DingTalkSender:
     
     def _compress_image(self, image_path: str, max_size_kb: int = 500) -> str:
         """
-        压缩图片到指定大小
+        压缩图片到指定大小（二分搜索最佳质量）
         
         Args:
             image_path: 原图片路径
@@ -274,27 +279,32 @@ class DingTalkSender:
                 background.paste(img, mask=img.split()[3])
                 img = background
             
-            # 压缩图片
-            quality = 85
             compressed_path = image_path.replace('.png', '_compressed.jpg')
             
-            while quality > 20:
-                # 保存到内存
+            # 二分搜索最佳质量
+            low, high = 20, 85
+            best_buffer = None
+            
+            while low <= high:
+                mid = (low + high) // 2
                 buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=quality, optimize=True)
+                img.save(buffer, format='JPEG', quality=mid, optimize=True)
                 size_kb = len(buffer.getvalue()) / 1024
                 
                 if size_kb <= max_size_kb:
-                    # 保存到文件
-                    with open(compressed_path, 'wb') as f:
-                        f.write(buffer.getvalue())
-                    logger.info(f"图片压缩成功: {size_kb:.1f}KB (质量: {quality})")
-                    return compressed_path
-                
-                quality -= 10
+                    best_buffer = buffer
+                    low = mid + 1  # 尝试更高质量
+                else:
+                    high = mid - 1  # 降低质量
             
-            # 如果还是太大,缩小尺寸
-            logger.warning(f"图片过大,尝试缩小尺寸")
+            if best_buffer:
+                with open(compressed_path, 'wb') as f:
+                    f.write(best_buffer.getvalue())
+                logger.info(f"图片压缩成功: {len(best_buffer.getvalue())/1024:.1f}KB")
+                return compressed_path
+            
+            # 二分搜索都不满足,缩小尺寸
+            logger.warning("图片过大,尝试缩小尺寸")
             width, height = img.size
             img = img.resize((width // 2, height // 2), Image.Resampling.LANCZOS)
             
@@ -330,6 +340,7 @@ class DingTalkSender:
         Returns:
             是否发送成功
         """
+        response = None
         try:
             if not os.path.exists(image_path):
                 logger.error(f"图片文件不存在: {image_path}")
@@ -375,7 +386,7 @@ class DingTalkSender:
             
             logger.info(f"发送图片消息到用户 {user_id}, 图片: {image_path}")
             
-            response = requests.post(
+            response = http_client.dingtalk_session.post(
                 url,
                 headers=headers,
                 json=payload,
@@ -428,6 +439,7 @@ class DingTalkSender:
         Returns:
             是否发送成功
         """
+        response = None
         try:
             access_token = self._get_access_token()
             
@@ -463,7 +475,7 @@ class DingTalkSender:
             logger.info(f"发送 {msg_type} 消息到用户 {user_id}")
             logger.debug(f"Payload: {payload}")
             
-            response = requests.post(
+            response = http_client.dingtalk_session.post(
                 url,
                 headers=headers,
                 json=payload,

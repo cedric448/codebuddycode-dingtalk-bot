@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional, Dict, Any
 
-import requests
+from http_client import http_client
 
 from config import (
     CODEBUDDY_API_URL, 
@@ -105,8 +105,8 @@ class CodebuddyClient:
                 logger.info(f"API URL: {self.api_url}")
                 logger.info(f"Request payload: {payload}")
 
-                # 使用配置的超时时间
-                response = requests.post(
+                # 使用配置的超时时间（通过连接池复用连接）
+                response = http_client.codebuddy_session.post(
                     self.api_url,
                     headers=self.headers,
                     json=payload,
@@ -150,6 +150,10 @@ class CodebuddyClient:
                 last_error = e
                 logger.warning(f"第 {attempt + 1} 次请求超时")
                 if attempt < retry_count:
+                    import time
+                    wait_time = min(2 ** attempt, 10)  # 指数退避: 1s, 2s, 4s, 最大10s
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
                     continue
                 logger.error("CodeBuddy API 请求超时(已重试所有次数)")
                 return "请求超时,服务器响应时间过长。已尝试多次重试,请稍后再试或联系管理员检查服务器状态。"

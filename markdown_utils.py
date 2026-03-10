@@ -10,6 +10,24 @@ logger = logging.getLogger(__name__)
 class MarkdownFormatter:
     """Markdown 格式化工具"""
     
+    # 预编译正则表达式（模块加载时一次性编译）
+    _MARKDOWN_PATTERNS = [
+        re.compile(pattern, re.MULTILINE) for pattern in [
+            r'^#+\s',         # 标题 # ## ###
+            r'\*\*.*?\*\*',   # 加粗 **text**
+            r'__.*?__',       # 加粗 __text__
+            r'\*.*?\*',       # 斜体 *text*
+            r'_.*?_',         # 斜体 _text_
+            r'`.*?`',         # 代码 `code`
+            r'```',           # 代码块 ```
+            r'^\*\s',         # 列表 * item
+            r'^\d+\.\s',      # 列表 1. item
+            r'^\s*>\s',       # 引用 > quote
+            r'\[.*?\]\(.*?\)',  # 链接 [text](url)
+            r'---',           # 分割线
+        ]
+    ]
+    
     @staticmethod
     def is_markdown_format(text: str) -> bool:
         """
@@ -24,25 +42,8 @@ class MarkdownFormatter:
         if not text:
             return False
         
-        # 检测常见的 Markdown 标记
-        markdown_patterns = [
-            r'^#+\s',        # 标题 # ## ###
-            r'\*\*.*?\*\*',  # 加粗 **text**
-            r'__.*?__',      # 加粗 __text__
-            r'\*.*?\*',      # 斜体 *text*
-            r'_.*?_',        # 斜体 _text_
-            r'`.*?`',        # 代码 `code`
-            r'```',          # 代码块 ```
-            r'^\*\s',        # 列表 * item
-            r'^\d+\.\s',     # 列表 1. item
-            r'^\s*>\s',      # 引用 > quote
-            r'\[.*?\]\(.*?\)',  # 链接 [text](url)
-            r'---',          # 分割线
-            r'=+',           # 分割线 (长度>=3)
-        ]
-        
-        for pattern in markdown_patterns:
-            if re.search(pattern, text, re.MULTILINE):
+        for pattern in MarkdownFormatter._MARKDOWN_PATTERNS:
+            if pattern.search(text):
                 return True
         
         return False

@@ -55,6 +55,8 @@ class AsyncTaskManager:
         self.tasks: Dict[str, TaskInfo] = {}
         self.timeout = timeout
         self._lock = threading.Lock()
+        # 启动定时清理
+        self._start_cleanup_timer()
         
     def create_task(
         self,
@@ -177,6 +179,21 @@ class AsyncTaskManager:
                 
             if old_tasks:
                 logger.info(f"清理了 {len(old_tasks)} 个旧任务")
+
+    def _start_cleanup_timer(self):
+        """启动定时清理"""
+        self._cleanup_timer = threading.Timer(3600, self._periodic_cleanup)
+        self._cleanup_timer.daemon = True
+        self._cleanup_timer.start()
+
+    def _periodic_cleanup(self):
+        """定期清理旧任务"""
+        try:
+            self.cleanup_old_tasks(max_age_hours=24)
+        except Exception as e:
+            logger.error(f"定期清理失败: {e}")
+        finally:
+            self._start_cleanup_timer()  # 重新调度
 
 
 # 全局任务管理器实例

@@ -32,15 +32,38 @@ from config import (
     USE_MARKDOWN_FOR_ASYNC,
     USE_MARKDOWN_FOR_LONG_TEXT,
     AUTO_ENHANCE_MARKDOWN,
-    IMAGE_SERVER_URL
+    IMAGE_SERVER_URL,
+    MSG_ASYNC_TASK_RECEIVED,
+    MSG_IMAGE_ANALYZING,
+    MSG_IMAGE_GENERATING,
+    MSG_IMAGE_DOWNLOAD_FAILED,
+    MSG_IMAGE_SOURCE_NEEDED,
+    MSG_IMAGE_SOURCE_DOWNLOAD_FAILED,
+    MSG_IMAGE_CONTENT_UNAVAILABLE,
+    MSG_IMAGE_ANALYSIS_FAILED,
+    MSG_IMAGE_GEN_FAILED,
+    MSG_GENERAL_ERROR,
+    MSG_TASK_RESULT_EMPTY,
+    MSG_UNSUPPORTED_MSG_TYPE,
+    MSG_PROCESS_ERROR,
+    validate_config,
 )
 from codebuddy_client import codebuddy_client
+from http_client import http_client
 from image_manager import image_manager
 from async_task_manager import task_manager, TaskStatus
 from dingtalk_sender import dingtalk_sender
 from markdown_utils import markdown_formatter
 from image_generator import image_generator
+import requests
+import json
+import time
+import uuid
+import re
+import os
+import shutil
 import threading
+from collections import OrderedDict
 
 
 # 配置日志
@@ -79,9 +102,25 @@ class MyCallbackHandler(ChatbotHandler):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # 消息去重 - 使用集合存储最近处理过的消息ID
-        self.processed_messages = set()
+        # 消息去重 - 使用 OrderedDict 实现 LRU 缓存
+        self._msg_cache = OrderedDict()
+        self._msg_cache_lock = threading.Lock()
         self.max_cache_size = 1000  # 最多缓存1000条消息ID
+        # 活跃后台线程跟踪（用于优雅退出）
+        self._active_threads: list = []
+        self._active_threads_lock = threading.Lock()
+
+    def _check_and_mark_processed(self, msg_id: str) -> bool:
+        """检查消息是否已处理，并标记为已处理。返回 True 表示已处理过（应跳过）"""
+        with self._msg_cache_lock:
+            if msg_id in self._msg_cache:
+                self._msg_cache.move_to_end(msg_id)  # 刷新位置
+                return True
+            self._msg_cache[msg_id] = True
+            # O(1) 淘汰最旧的条目
+            while len(self._msg_cache) > self.max_cache_size:
+                self._msg_cache.popitem(last=False)
+            return False
 
     async def process(self, callback_message: CallbackMessage):
         """
@@ -98,18 +137,9 @@ class MyCallbackHandler(ChatbotHandler):
 
             # 消息去重检查
             msg_id = message.message_id
-            if msg_id in self.processed_messages:
+            if self._check_and_mark_processed(msg_id):
                 logger.info(f"消息已处理过,跳过: {msg_id}")
                 return AckMessage.STATUS_OK, 'ok'
-            
-            # 添加到已处理集合
-            self.processed_messages.add(msg_id)
-            
-            # 限制缓存大小
-            if len(self.processed_messages) > self.max_cache_size:
-                # 移除最旧的一半消息ID(简单实现,更好的方式是用 LRU)
-                self.processed_messages = set(list(self.processed_messages)[500:])
-                logger.info(f"已清理消息去重缓存,当前大小: {len(self.processed_messages)}")
 
             # 获取消息内容
             msg_type = message.message_type
@@ -134,7 +164,7 @@ class MyCallbackHandler(ChatbotHandler):
             # 新增逻辑1: 只有图片没有文字 -> 图片分析
             if has_image and image_download_code and not user_text.strip():
                 logger.info("检测到纯图片消息,进行图片分析")
-                self.reply_text("收到图片,正在分析中...", message)
+                self.reply_text(MSG_IMAGE_ANALYZING, message)
                 
                 # 使用缺省prompt分析图片
                 default_prompt = "请分析此图片"
@@ -154,7 +184,7 @@ class MyCallbackHandler(ChatbotHandler):
             if is_generation:
                 logger.info(f"检测到生图请求,类型: {gen_type}")
                 # 发送初始回复
-                self.reply_text("收到生图请求,正在处理中...", message)
+                self.reply_text(MSG_IMAGE_GENERATING, message)
                 
                 # 处理生图请求
                 loop = asyncio.get_event_loop()
@@ -206,13 +236,12 @@ class MyCallbackHandler(ChatbotHandler):
             return AckMessage.STATUS_OK, 'ok'
 
         except Exception as e:
-            logger.error(f"处理消息失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"处理消息失败: {e}", exc_info=True)
             try:
-                self.reply_text(f"处理失败: {str(e)}", message)
-            except:
-                pass
+                # 用户友好的错误消息，不暴露技术细节
+                self.reply_text(MSG_GENERAL_ERROR, message)
+            except Exception:
+                logger.error("发送错误通知也失败了", exc_info=True)
             return AckMessage.STATUS_OK, 'ok'
     
     def _extract_text_from_message(self, message: ChatbotMessage) -> str:
@@ -230,6 +259,27 @@ class MyCallbackHandler(ChatbotHandler):
             return content
         return ""
     
+    @staticmethod
+    def _user_friendly_error(e: Exception) -> str:
+        """根据异常类型返回用户友好的错误消息"""
+        import requests as _req
+        if isinstance(e, _req.exceptions.Timeout):
+            return "请求超时，服务器响应较慢，请稍后重试。"
+        if isinstance(e, _req.exceptions.ConnectionError):
+            return "网络连接出现问题，请检查网络后重试。"
+        if isinstance(e, _req.exceptions.HTTPError):
+            return "服务暂时不可用，请稍后重试。"
+        return MSG_GENERAL_ERROR
+    
+    def shutdown(self, timeout: float = 30):
+        """等待所有后台任务完成"""
+        with self._active_threads_lock:
+            threads = list(self._active_threads)
+        if threads:
+            logger.info(f"等待 {len(threads)} 个后台任务完成 (超时 {timeout}s)...")
+            for t in threads:
+                t.join(timeout=timeout)
+
     async def _process_async(self, message: ChatbotMessage, user_text: str):
         """
         异步处理长时间任务
@@ -239,8 +289,7 @@ class MyCallbackHandler(ChatbotHandler):
             user_text: 用户消息文本
         """
         # 立即回复用户
-        initial_msg = "收到任务，正在后台处理中...\n\n这是一个长时间任务，预计需要 2-5 分钟，完成后会主动推送结果给您。"
-        self.reply_text(initial_msg, message)
+        self.reply_text(MSG_ASYNC_TASK_RECEIVED, message)
         
         # 创建异步任务
         task_id = task_manager.create_task(
@@ -250,13 +299,17 @@ class MyCallbackHandler(ChatbotHandler):
             prompt=user_text
         )
         
-        # 在后台线程中处理
+        # 在后台线程中处理（非守护线程，确保优雅退出时能等待完成）
         thread = threading.Thread(
             target=self._background_task_worker,
             args=(task_id, message),
-            daemon=True
+            daemon=False
         )
         thread.start()
+        with self._active_threads_lock:
+            # 清理已完成的线程
+            self._active_threads = [t for t in self._active_threads if t.is_alive()]
+            self._active_threads.append(thread)
         
         logger.info(f"异步任务已启动: {task_id}")
     
@@ -311,12 +364,10 @@ class MyCallbackHandler(ChatbotHandler):
                 else:
                     logger.error(f"任务结果推送失败: {task_id}")
             else:
-                task_manager.fail_task(task_id, "处理结果为空")
+                task_manager.fail_task(task_id, MSG_TASK_RESULT_EMPTY)
                 
         except Exception as e:
-            logger.error(f"后台任务执行失败: {task_id}, 错误: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"后台任务执行失败: {task_id}, 错误: {e}", exc_info=True)
             
             task_manager.fail_task(task_id, str(e))
             
@@ -326,10 +377,10 @@ class MyCallbackHandler(ChatbotHandler):
                     conversation_id=message.conversation_id,
                     user_id=message.sender_staff_id,
                     msg_type='text',
-                    content=f"处理失败: {str(e)}"
+                    content=MSG_GENERAL_ERROR
                 )
-            except:
-                pass
+            except Exception:
+                logger.error("发送后台任务失败通知也失败了", exc_info=True)
 
     def _process_image_analysis(self, message: ChatbotMessage, prompt: str, image_download_code: str):
         """
@@ -344,7 +395,7 @@ class MyCallbackHandler(ChatbotHandler):
             # 下载图片
             source_image_path = self._download_image(image_download_code)
             if not source_image_path:
-                self.reply_text("图片下载失败", message)
+                self.reply_text(MSG_IMAGE_DOWNLOAD_FAILED, message)
                 return
             
             logger.info(f"图片分析: 使用提示词 '{prompt}' 分析图片 {source_image_path}")
@@ -364,13 +415,11 @@ class MyCallbackHandler(ChatbotHandler):
                 else:
                     self.reply_text(result, message)
             else:
-                self.reply_text("图片分析失败", message)
+                self.reply_text(MSG_IMAGE_ANALYSIS_FAILED, message)
                 
         except Exception as e:
-            logger.error(f"图片分析失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            self.reply_text(f"图片分析失败: {str(e)}", message)
+            logger.error(f"图片分析失败: {e}", exc_info=True)
+            self.reply_text(MSG_IMAGE_ANALYSIS_FAILED, message)
 
     def _process_image_generation(self, message: ChatbotMessage, user_text: str, gen_type: str, image_download_code: str = None):
         """
@@ -396,12 +445,12 @@ class MyCallbackHandler(ChatbotHandler):
             elif gen_type == 'image-to-image':
                 # 图生图 - 需要先下载源图片
                 if not image_download_code:
-                    self.reply_text("图生图需要提供源图片", message)
+                    self.reply_text(MSG_IMAGE_SOURCE_NEEDED, message)
                     return
                 
                 source_image_path = self._download_image(image_download_code)
                 if not source_image_path:
-                    self.reply_text("源图片下载失败", message)
+                    self.reply_text(MSG_IMAGE_SOURCE_DOWNLOAD_FAILED, message)
                     return
                 
                 result = image_generator.generate_image_to_image(prompt, source_image_path)
@@ -417,7 +466,6 @@ class MyCallbackHandler(ChatbotHandler):
                 logger.info(f"图片生成成功,准备发送: {generated_image_path}, 模型: {model_info}")
                 
                 # 获取图片文件名
-                import os
                 filename = os.path.basename(generated_image_path)
                 
                 # 构建图片 URL
@@ -449,9 +497,7 @@ class MyCallbackHandler(ChatbotHandler):
                 logger.warning("图片生成返回空路径,可能是API超时或失败")
                 
         except Exception as e:
-            logger.error(f"图片生成处理失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"图片生成处理失败: {e}", exc_info=True)
             
             # 只在明确的错误情况下回复用户
             # 超时错误不回复,避免重复消息
@@ -477,8 +523,8 @@ class MyCallbackHandler(ChatbotHandler):
                     if local_path:
                         return codebuddy_client.chat_image_only(local_path)
                     else:
-                        return "图片下载失败，无法处理。"
-                return "无法获取图片内容。"
+                        return MSG_IMAGE_DOWNLOAD_FAILED
+                return MSG_IMAGE_CONTENT_UNAVAILABLE
 
             elif msg_type == "richText":
                 # 富文本消息（文字+图片）
@@ -507,52 +553,31 @@ class MyCallbackHandler(ChatbotHandler):
                     if local_path:
                         return codebuddy_client.chat_with_image(content, local_path)
                     else:
-                        return "图片下载失败，无法处理。"
+                        return MSG_IMAGE_DOWNLOAD_FAILED
                 elif image_download_code:
                     local_path = self._download_image(image_download_code)
                     if local_path:
                         return codebuddy_client.chat_image_only(local_path)
                     else:
-                        return "图片下载失败，无法处理。"
+                        return MSG_IMAGE_DOWNLOAD_FAILED
                 elif content:
                     return codebuddy_client.chat_text_only(content)
 
-                return "无法处理此消息。"
+                return MSG_PROCESS_ERROR
 
             else:
                 logger.warning(f"未知消息类型: {msg_type}")
-                return f"暂不支持消息类型: {msg_type}"
+                return MSG_UNSUPPORTED_MSG_TYPE
 
         except Exception as e:
-            logger.error(f"处理消息异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return f"处理异常: {str(e)}"
+            logger.error(f"处理消息异常: {e}", exc_info=True)
+            return MSG_GENERAL_ERROR
 
     def _download_image(self, download_code: str) -> str:
         """下载图片到本地"""
         try:
-            import requests
-            import uuid
-
-            # 先获取access_token - 使用appKey参数
-            token_url = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
-            logger.info(f"获取token, appKey={DINGTALK_CLIENT_ID[:10]}...")
-            token_resp = requests.post(
-                token_url,
-                json={
-                    "appKey": DINGTALK_CLIENT_ID,
-                    "appSecret": DINGTALK_CLIENT_SECRET
-                },
-                timeout=10
-            )
-            logger.info(f"Token响应: status={token_resp.status_code}, text={token_resp.text[:200]}")
-            token_data = token_resp.json()
-            access_token = token_data.get("accessToken")
-
-            if not access_token:
-                logger.error(f"获取access_token失败: {token_data}")
-                return None
+            # 复用 dingtalk_sender 的 token 缓存（线程安全）
+            access_token = dingtalk_sender._get_access_token()
 
             # 使用正确的钉钉图片下载接口 - 参考SDK实现
             headers = {
@@ -566,7 +591,7 @@ class MyCallbackHandler(ChatbotHandler):
             }
             image_url = "https://api.dingtalk.com/v1.0/robot/messageFiles/download"
 
-            resp = requests.post(image_url, headers=headers, json=payload, timeout=30)
+            resp = http_client.dingtalk_session.post(image_url, headers=headers, json=payload, timeout=30)
             logger.info(f"图片下载响应: status={resp.status_code}, text={resp.text[:200]}")
 
             if resp.status_code == 200:
@@ -581,7 +606,7 @@ class MyCallbackHandler(ChatbotHandler):
                         for attempt in range(max_retries):
                             try:
                                 logger.info(f"开始下载图片 (尝试 {attempt + 1}/{max_retries}): {download_url[:100]}...")
-                                img_resp = requests.get(download_url, timeout=120, stream=True)
+                                img_resp = http_client.download_session.get(download_url, timeout=120, stream=True)
                                 if img_resp.status_code == 200:
                                     filename = f"{uuid.uuid4().hex}.jpg"
                                     local_path = image_manager.get_image_path(filename)
@@ -597,13 +622,11 @@ class MyCallbackHandler(ChatbotHandler):
                                 else:
                                     logger.warning(f"图片下载失败: HTTP {img_resp.status_code}")
                                     if attempt < max_retries - 1:
-                                        import time
                                         time.sleep(2)  # 重试前等待2秒
                                         continue
                             except requests.exceptions.Timeout:
                                 logger.warning(f"图片下载超时 (尝试 {attempt + 1}/{max_retries})")
                                 if attempt < max_retries - 1:
-                                    import time
                                     time.sleep(2)
                                     continue
                                 else:
@@ -611,7 +634,6 @@ class MyCallbackHandler(ChatbotHandler):
                             except Exception as e:
                                 logger.error(f"图片下载异常 (尝试 {attempt + 1}/{max_retries}): {e}")
                                 if attempt < max_retries - 1:
-                                    import time
                                     time.sleep(2)
                                     continue
                 except Exception as e:
@@ -621,238 +643,99 @@ class MyCallbackHandler(ChatbotHandler):
             return None
 
         except Exception as e:
-            logger.error(f"下载图片失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"下载图片失败: {e}", exc_info=True)
             return None
 
     def reply_text(self, text: str, incoming_message: ChatbotMessage):
         """发送文本消息 - 覆盖父类方法确保UTF-8编码"""
-        import json
-        import requests
-
-        # 确保文本是UTF-8编码
         if isinstance(text, bytes):
             text = text.decode('utf-8')
-
-        # 记录消息长度
         logger.info(f"准备发送消息，长度: {len(text)} 字符")
-
-        request_headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Accept': '*/*',
-        }
-        values = {
+        payload = {
             'msgtype': 'text',
-            'text': {
-                'content': text,
-            },
-            'at': {
-                'atUserIds': [incoming_message.sender_staff_id] if incoming_message.sender_staff_id else []
-            }
+            'text': {'content': text},
+            'at': {'atUserIds': [incoming_message.sender_staff_id] if incoming_message.sender_staff_id else []}
         }
-        try:
-            response = requests.post(
-                incoming_message.session_webhook,
-                headers=request_headers,
-                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
-            )
-            response.raise_for_status()
-            
-            # 记录钉钉API的响应
-            logger.info(f"回复消息发送成功，钉钉响应: {response.text}")
-        except Exception as e:
-            logger.error(f"回复消息失败: {e}, response={response.text if response else 'None'}")
-            return None
-        return response.json() if response.text else None
+        return self._send_webhook_message(incoming_message.session_webhook, payload, "文本消息")
 
     def reply_markdown(self, title: str, text: str, incoming_message: ChatbotMessage):
         """发送 Markdown 消息"""
-        import json
-        import requests
-
-        # 确保文本是UTF-8编码
         if isinstance(text, bytes):
             text = text.decode('utf-8')
-        
         if isinstance(title, bytes):
             title = title.decode('utf-8')
-
-        # 记录消息长度
         logger.info(f"准备发送 Markdown 消息: 标题={title}, 内容长度={len(text)} 字符")
-
-        request_headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Accept': '*/*',
-        }
-        values = {
+        payload = {
             'msgtype': 'markdown',
-            'markdown': {
-                'title': title,
-                'text': text,
-            },
-            'at': {
-                'atUserIds': [incoming_message.sender_staff_id] if incoming_message.sender_staff_id else []
-            }
+            'markdown': {'title': title, 'text': text},
+            'at': {'atUserIds': [incoming_message.sender_staff_id] if incoming_message.sender_staff_id else []}
         }
-        try:
-            response = requests.post(
-                incoming_message.session_webhook,
-                headers=request_headers,
-                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
-            )
-            response.raise_for_status()
-            
-            # 记录钉钉API的响应
-            logger.info(f"Markdown 消息发送成功，钉钉响应: {response.text}")
-        except Exception as e:
-            logger.error(f"Markdown 消息发送失败: {e}, response={response.text if response else 'None'}")
-            return None
-        return response.json() if response.text else None
+        return self._send_webhook_message(incoming_message.session_webhook, payload, "Markdown 消息")
     
     def reply_link_card(self, title: str, text: str, image_url: str, link_url: str, incoming_message: ChatbotMessage):
-        """
-        发送链接卡片消息 - 支持图片预览
-        
-        Args:
-            title: 卡片标题
-            text: 卡片文本描述
-            image_url: 图片URL
-            link_url: 点击卡片跳转的链接
-            incoming_message: 原始消息对象
-        """
-        import json
-        import requests
-        
-        # 确保文本是UTF-8编码
+        """发送链接卡片消息 - 支持图片预览"""
         if isinstance(text, bytes):
             text = text.decode('utf-8')
         if isinstance(title, bytes):
             title = title.decode('utf-8')
-        
         logger.info(f"准备发送链接卡片: 标题={title}, 图片={image_url}")
-        
-        request_headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Accept': '*/*',
-        }
-        values = {
+        payload = {
             'msgtype': 'link',
-            'link': {
-                'title': title,
-                'text': text,
-                'messageUrl': link_url,
-                'picUrl': image_url
-            }
+            'link': {'title': title, 'text': text, 'messageUrl': link_url, 'picUrl': image_url}
         }
-        try:
-            response = requests.post(
-                incoming_message.session_webhook,
-                headers=request_headers,
-                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
-            )
-            response.raise_for_status()
-            
-            logger.info(f"链接卡片发送成功,钉钉响应: {response.text}")
-        except Exception as e:
-            logger.error(f"链接卡片发送失败: {e}, response={response.text if response else 'None'}")
-            return None
-        return response.json() if response.text else None
+        return self._send_webhook_message(incoming_message.session_webhook, payload, "链接卡片")
 
     def reply_action_card(self, title: str, text: str, image_url: str, btn_text: str, btn_url: str, incoming_message: ChatbotMessage):
-        """
-        发送交互式卡片消息 - 支持嵌入图片且不显示URL
-        
-        Args:
-            title: 卡片标题
-            text: 卡片Markdown文本
-            image_url: 图片URL(会嵌入到text中)
-            btn_text: 按钮文字
-            btn_url: 按钮跳转链接
-            incoming_message: 原始消息对象
-        """
-        import json
-        import requests
-        
+        """发送交互式卡片消息 - 支持嵌入图片且不显示URL"""
         logger.info(f"准备发送交互式卡片: 标题={title}, 图片={image_url}")
-        
-        request_headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Accept': '*/*',
-        }
-        
-        # 构建完整的 Markdown 文本(包含图片)
         full_text = f"{text}\n\n![图片]({image_url})"
-        
-        values = {
+        payload = {
             'msgtype': 'actionCard',
             'actionCard': {
-                'title': title,
-                'text': full_text,
-                'btnOrientation': '0',  # 按钮竖直排列
-                'singleTitle': btn_text,
-                'singleURL': btn_url
+                'title': title, 'text': full_text,
+                'btnOrientation': '0', 'singleTitle': btn_text, 'singleURL': btn_url
             }
         }
-        try:
-            response = requests.post(
-                incoming_message.session_webhook,
-                headers=request_headers,
-                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
-            )
-            response.raise_for_status()
-            
-            logger.info(f"交互式卡片发送成功,钉钉响应: {response.text}")
-        except Exception as e:
-            logger.error(f"交互式卡片发送失败: {e}, response={response.text if response else 'None'}")
-            return None
-        return response.json() if response.text else None
+        return self._send_webhook_message(incoming_message.session_webhook, payload, "交互式卡片")
 
     def reply_feed_card(self, title: str, text: str, image_url: str, link_url: str, incoming_message: ChatbotMessage):
+        """发送图文消息(FeedCard) - 单聊和群聊都支持"""
+        logger.info(f"准备发送图文消息(FeedCard): 标题={title}, 图片={image_url}")
+        payload = {
+            'msgtype': 'feedCard',
+            'feedCard': {
+                'links': [{'title': title, 'messageURL': link_url, 'picURL': image_url}]
+            }
+        }
+        return self._send_webhook_message(incoming_message.session_webhook, payload, "图文消息")
+
+    def _send_webhook_message(self, webhook_url: str, payload: dict, msg_type_label: str):
         """
-        发送图文消息(FeedCard) - 单聊和群聊都支持
+        公共 webhook 消息发送方法
         
         Args:
-            title: 消息标题
-            text: 消息描述
-            image_url: 图片URL
-            link_url: 点击跳转链接
-            incoming_message: 原始消息对象
+            webhook_url: Session webhook URL
+            payload: 消息 payload 字典
+            msg_type_label: 消息类型标签（用于日志）
+        
+        Returns:
+            响应 JSON 或 None
         """
-        import json
-        import requests
-        
-        logger.info(f"准备发送图文消息(FeedCard): 标题={title}, 图片={image_url}")
-        
-        request_headers = {
+        headers = {
             'Content-Type': 'application/json; charset=utf-8',
             'Accept': '*/*',
         }
-        
-        values = {
-            'msgtype': 'feedCard',
-            'feedCard': {
-                'links': [
-                    {
-                        'title': title,
-                        'messageURL': link_url,
-                        'picURL': image_url
-                    }
-                ]
-            }
-        }
-        
+        response = None
         try:
-            response = requests.post(
-                incoming_message.session_webhook,
-                headers=request_headers,
-                data=json.dumps(values, ensure_ascii=False).encode('utf-8')
+            response = http_client.dingtalk_session.post(
+                webhook_url,
+                headers=headers,
+                data=json.dumps(payload, ensure_ascii=False).encode('utf-8')
             )
             response.raise_for_status()
-            
-            logger.info(f"图文消息发送成功,钉钉响应: {response.text}")
+            logger.info(f"{msg_type_label}发送成功，钉钉响应: {response.text}")
         except Exception as e:
-            logger.error(f"图文消息发送失败: {e}, response={response.text if response else 'None'}")
+            logger.error(f"{msg_type_label}发送失败: {e}, response={response.text if response else 'None'}")
             return None
         return response.json() if response.text else None
 
@@ -938,8 +821,6 @@ class MyCallbackHandler(ChatbotHandler):
         Returns:
             图片路径,如果没找到返回None
         """
-        import re
-        
         # 匹配 `/root/generated-images/xxx.png` 或类似路径
         patterns = [
             r'`(/root/generated-images/[^`]+\.(?:png|jpg|jpeg|gif|webp))`',  # 反引号包裹
@@ -964,11 +845,6 @@ class MyCallbackHandler(ChatbotHandler):
             image_path: 生成的图片路径
             original_response: 原始响应文本
         """
-        import os
-        import shutil
-        import uuid
-        from pathlib import Path
-        
         try:
             # 检查图片是否存在
             if not os.path.exists(image_path):
@@ -995,7 +871,6 @@ class MyCallbackHandler(ChatbotHandler):
             
             # 从原始响应中提取描述文本(去掉路径部分)
             description = original_response
-            import re
             description = re.sub(r'`/root/generated-images/[^`]+`', '', description)
             description = re.sub(r'/root/generated-images/\S+\.(?:png|jpg|jpeg|gif|webp)', '', description)
             description = description.strip()
@@ -1019,15 +894,15 @@ class MyCallbackHandler(ChatbotHandler):
             logger.info(f"已通过链接卡片发送生成的图片: {image_url}")
             
         except Exception as e:
-            logger.error(f"发送生成的图片失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"发送生成的图片失败: {e}", exc_info=True)
             # 出错时发送原始响应
             self.reply_text(original_response, message)
 
 
 async def main():
     """主函数"""
+    import signal
+
     # 配置日志
     setup_logging()
 
@@ -1035,9 +910,11 @@ async def main():
     logger.info("钉钉机器人启动中...")
     logger.info("=" * 50)
 
-    # 检查配置
-    if not DINGTALK_CLIENT_ID or not DINGTALK_CLIENT_SECRET:
-        logger.error("请配置 DINGTALK_CLIENT_ID 和 DINGTALK_CLIENT_SECRET")
+    # 验证配置
+    config_errors = validate_config()
+    if config_errors:
+        for err in config_errors:
+            logger.error(f"配置错误: {err}")
         sys.exit(1)
 
     logger.info(f"Client ID: {DINGTALK_CLIENT_ID[:10]}...")
@@ -1051,12 +928,26 @@ async def main():
     handler = MyCallbackHandler()
     client.register_callback_handler(ChatbotMessage.TOPIC, handler)
 
+    # 信号处理 - 优雅退出
+    def signal_handler(signum, frame):
+        sig_name = signal.Signals(signum).name
+        logger.info(f"收到 {sig_name} 信号，等待后台任务完成...")
+        handler.shutdown(timeout=30)
+        http_client.close()
+        logger.info("清理完成，退出")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     # 启动客户端
     try:
         logger.info("正在连接钉钉服务...")
         await client.start()
     except KeyboardInterrupt:
         logger.info("收到中断信号，正在停止...")
+        handler.shutdown(timeout=30)
+        http_client.close()
     except Exception as e:
         logger.error(f"运行异常: {e}")
         raise

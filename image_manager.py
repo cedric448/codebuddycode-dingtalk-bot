@@ -7,7 +7,7 @@ import uuid
 import logging
 from pathlib import Path
 from typing import Optional
-import requests
+from http_client import http_client
 
 from config import IMAGE_DIR
 
@@ -40,7 +40,7 @@ class ImageManager:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get(image_url, headers=headers, timeout=30)
+            response = http_client.download_session.get(image_url, headers=headers, timeout=30)
             response.raise_for_status()
 
             # 保存到本地
