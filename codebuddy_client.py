@@ -4,6 +4,7 @@ CodeBuddy API 客户端
 """
 import json
 import logging
+import requests
 from typing import Optional, Dict, Any
 
 from http_client import http_client
@@ -148,64 +149,63 @@ class CodebuddyClient:
 
             except requests.exceptions.Timeout as e:
                 last_error = e
-                logger.warning(f"第 {attempt + 1} 次请求超时")
+                logger.warning(f"第 {attempt + 1} 次请求超时", exc_info=True)
                 if attempt < retry_count:
                     import time
                     wait_time = min(2 ** attempt, 10)  # 指数退避: 1s, 2s, 4s, 最大10s
                     logger.info(f"等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
                     continue
-                logger.error("CodeBuddy API 请求超时(已重试所有次数)")
+                logger.error(f"CodeBuddy API 请求超时(已重试{retry_count+1}次): {self.api_url}", exc_info=True)
                 return "请求超时,服务器响应时间过长。已尝试多次重试,请稍后再试或联系管理员检查服务器状态。"
                 
             except requests.exceptions.HTTPError as e:
-                # HTTP错误(包括502, 503, 504)
+                # HTTP错误(包括502, 503, 504, 500)
                 last_error = e
                 status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
-                logger.warning(f"第 {attempt + 1} 次请求失败: HTTP {status_code}")
+                logger.warning(f"第 {attempt + 1} 次请求失败: HTTP {status_code}", exc_info=True)
                 
-                # 对可重试的网关错误进行重试
-                if status_code in [502, 503, 504]:
+                # 对可重试的网关错误和服务器错误进行重试
+                if status_code in [500, 502, 503, 504]:
                     if attempt < retry_count:
                         import time
                         # 根据错误类型调整等待时间
-                        wait_time = 3 if status_code == 502 else 2
+                        wait_time = {500: 2, 502: 3, 503: 2, 504: 5}.get(status_code, 2)
                         logger.info(f"等待 {wait_time} 秒后重试...")
                         time.sleep(wait_time)
                         continue
                     
                     # 所有重试都失败后,返回友好的错误信息
                     error_messages = {
+                        500: "服务器内部错误(500)。后端服务遇到问题,请稍后再试或联系管理员检查服务状态。",
                         502: "网关错误(502)。上游服务暂时不可用,请稍后再试或联系管理员检查服务状态。",
                         503: "服务不可用(503)。服务器暂时无法处理请求,请稍后再试。",
                         504: "网关超时(504)。服务器处理时间过长,请尝试简化您的请求,或稍后再试。"
                     }
-                    logger.error(f"CodeBuddy API 错误(已重试所有次数): {status_code}")
-                    return error_messages.get(status_code, f"网关错误({status_code}),请稍后再试。")
+                    logger.error(f"CodeBuddy API 错误(已重试{retry_count+1}次): HTTP {status_code}, URL: {self.api_url}", exc_info=True)
+                    return error_messages.get(status_code, f"服务器错误({status_code}),请稍后再试。")
                 else:
                     # 其他HTTP错误不重试(如400, 401, 403, 404等)
-                    logger.error(f"CodeBuddy API HTTP错误: {status_code} - {str(e)}")
-                    return f"API请求失败(HTTP {status_code}): {str(e)}"
+                    logger.error(f"CodeBuddy API HTTP错误: {status_code} - {str(e)}", exc_info=True)
+                    return f"API请求失败(HTTP {status_code}),请检查请求参数或联系管理员。"
                     
             except requests.exceptions.RequestException as e:
                 last_error = e
-                logger.warning(f"第 {attempt + 1} 次请求异常: {str(e)}")
+                logger.warning(f"第 {attempt + 1} 次请求异常: {str(e)}", exc_info=True)
                 if attempt < retry_count:
                     import time
                     time.sleep(2)
                     continue
-                logger.error(f"CodeBuddy API 请求失败(已重试所有次数): {e}")
-                return f"调用CodeBuddy失败: {str(e)}"
+                logger.error(f"CodeBuddy API 请求失败(已重试{retry_count+1}次): {e}, URL: {self.api_url}", exc_info=True)
+                return "网络请求失败,请检查网络连接后重试,或联系管理员检查服务状态。"
                 
             except json.JSONDecodeError as e:
-                logger.error(f"CodeBuddy API 响应解析失败: {e}")
+                logger.error(f"CodeBuddy API 响应解析失败: {e}, response_text: {response_text[:200]}", exc_info=True)
                 return "响应解析失败,请稍后重试。"
                 
             except Exception as e:
-                logger.error(f"CodeBuddy API 调用异常: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                return f"处理异常: {str(e)}"
+                logger.error(f"CodeBuddy API 调用异常: {e}, URL: {self.api_url}", exc_info=True)
+                return "服务调用失败,请稍后重试或联系管理员。"
         
         # 如果所有重试都失败
         if last_error:
